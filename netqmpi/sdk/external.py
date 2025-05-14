@@ -52,12 +52,13 @@ def app_instance_from_file(file: str = None, num_processes: int = 2,
 
     for rank, program_file in program_files.items():
         current_argv = argv.copy()
-        # Get only the name of the program_file
-        basename_file = os.path.basename(program_file)
-        # Remove the .py extension
-        # basename_file = basename_file[: -len(".py")]
+
         prog_module = import_module_from_path(program_file)
+
         main_func = getattr(prog_module, "main")
+        if main_func is None:
+            raise ValueError(f"main function not found in {program_file}")
+
         prog = Program(party=rank, entry=main_func, args=[], results=[])
         programs += [prog]
         current_argv["rank"] = int(rank.split("_")[-1])

@@ -6,6 +6,9 @@ from netqasm.sdk.classical_communication.message import StructuredMessage
 from netqasm.sdk.external import Socket
 from netqasm.sdk.external import NetQASMConnection
 
+from netqmpi.sdk.primitives.p2p import P2PCommTeledata
+
+
 class QMPICommunicator:
     def __init__(self, rank, size, app_config):
         self.rank = rank
@@ -70,81 +73,14 @@ class QMPICommunicator:
     def get_size(self):
         return self.size
 
-    def qsend(self, qubit: Qubit, dest_rank: int):
+    def qsend(self, qubits: List[Qubit], dest_rank: int):
         """
         Send a qubit to the destination rank using teleportation.
         """
-        PointToPointComm.qsend(self, qubit, dest_rank)
+        P2PCommTeledata.qsend(self, qubits, dest_rank)
 
-    def qrecv(self, src_rank: int) -> Qubit:
+    def qrecv(self, src_rank: int) -> List[Qubit]:
         """
         Receive a qubit from the source rank using teleportation.
         """
-        return PointToPointComm.qrecv(self, src_rank)
-    
-
-class PointToPointComm:
-    """
-    Point-to-point communication class for quantum communication.
-    """
-    @staticmethod
-    def qsend(communicator: QMPICommunicator, qubit: Qubit, dest_rank: int) -> None:
-        """
-        Send data using the specified communication type.
-
-        Args:
-            qubit: The data to be sent.
-            dest_rank: The destination rank.
-            comm: The communicator instance.
-        """
-        epr_socket = communicator.get_epr_socket(communicator.rank, dest_rank)
-        socket = communicator.get_socket(communicator.rank, dest_rank)
-
-        # Create EPR pairs
-        epr = epr_socket.create_keep()[0]
-
-        # Teleport
-        qubit.cnot(epr)
-        qubit.H()
-        m1 = qubit.measure()
-        m2 = epr.measure()
-
-        socket.send_structured(StructuredMessage("Corrections", (m1, m2)))
-
-    @staticmethod
-    def qrecv(communicator: QMPICommunicator, src_rank: int) -> Qubit:
-        """
-        Receive data using the specified communication type.
-
-        Args:
-            src_rank: The source rank.
-
-        Returns:
-            The qubit received.
-        """
-        epr_socket = communicator.get_epr_socket(communicator.rank, src_rank)
-        socket = communicator.get_socket(communicator.rank, src_rank)
-
-        epr = epr_socket.recv_keep()[0]
-
-        communicator.connection.flush()
-
-        # Get the corrections
-        m1, m2 = socket.recv_structured().payload
-
-        if m2 == 1:
-            epr.X()
-        if m1 == 1:
-            epr.Z()
-
-        communicator.connection.flush()
-
-        # Create a new qubit to return
-        q = Qubit(communicator.connection)
-
-        # Swap the state of the qubit with the EPR pair
-        epr.cnot(q)
-        q.cnot(epr)
-        epr.cnot(q)
-
-        return q
+        return P2PCommTeledata.qrecv(self, src_rank)

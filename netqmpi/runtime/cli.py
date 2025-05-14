@@ -97,3 +97,6 @@ def main():
         num_procs=args.num_procs,
         script_args=args.script_args,
     )
+
+if __name__ == "__main__":
+    main()

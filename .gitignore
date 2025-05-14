@@ -3,3 +3,5 @@ test
 test/*
 *.egg-info
 __pycache__
+log
+log/*

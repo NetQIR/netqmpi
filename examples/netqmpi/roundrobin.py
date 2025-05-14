@@ -20,16 +20,16 @@ def main(app_config=None, rank=0, size=1):
             q.H()
             print_info(f"start to teleport a qubit to rank_{next_rank}", rank)
 
-            COMM_WORLD.qsend(q, next_rank)
+            COMM_WORLD.qsend([q], next_rank)
 
         else:
             print_info(f"starting to receive a qubit from {previous_rank}", rank)
-            qubit_recv = COMM_WORLD.qrecv(previous_rank)
+            [qubit_recv] = COMM_WORLD.qrecv(previous_rank)
 
             # Send to next rank only if not the last rank
             if rank != size - 1:
                 print_info(f"received a qubit from rank_{previous_rank}", rank)
-                COMM_WORLD.qsend(qubit_recv, next_rank)
+                COMM_WORLD.qsend([qubit_recv], next_rank)
                 print_info(f"sent a qubit to rank_{next_rank}", rank)
             else:
                 # Measure the qubit
