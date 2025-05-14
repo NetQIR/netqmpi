@@ -6,6 +6,7 @@ from netqasm.sdk.classical_communication.message import StructuredMessage
 from netqasm.sdk.external import Socket
 from netqasm.sdk.external import NetQASMConnection
 
+from netqmpi.sdk.primitives.collective.collective import CollectiveCommTeledata
 from netqmpi.sdk.primitives.p2p import P2PCommTeledata
 
 
@@ -37,6 +38,9 @@ class QMPICommunicator:
 
     def get_epr_sockets_list(self) -> List[EPRSocket]:
         return self.epr_sockets_list
+
+    def get_rank(self) -> int:
+        return self.rank
 
     def get_next_rank(self, rank: int) -> int:
         return (rank + 1) % self.size
@@ -70,7 +74,7 @@ class QMPICommunicator:
 
         return my_eprs[self.__get_rank_name(other_rank)]
 
-    def get_size(self):
+    def get_size(self) -> int:
         return self.size
 
     def qsend(self, qubits: List[Qubit], dest_rank: int):
@@ -84,3 +88,6 @@ class QMPICommunicator:
         Receive a qubit from the source rank using teleportation.
         """
         return P2PCommTeledata.qrecv(self, src_rank)
+
+    def qscatter(self, qubits: List[Qubit], rank_sender: int) -> List[Qubit]:
+        return CollectiveCommTeledata.qscatter(self, qubits, rank_sender)
