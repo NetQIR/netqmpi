@@ -21,7 +21,6 @@ class P2PComm(ABC):
     def qrecv(communicator: "QMPICommunicator", src_rank: int, expected_qubits: int) -> List[Qubit]:
         """
         Receive a qubit from the source rank using teleportation.
-
         """
         pass
 
