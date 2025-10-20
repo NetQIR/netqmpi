@@ -17,7 +17,7 @@ Like NetQIR, NetQMPI aims to facilitate distributed quantum computing by enablin
   - [Case of use example: send and receive a qubit](#Case-of-use-example-send-and-receive-a-qubit)
     - [NetQMPI version](#NetQMPI-version)
     - [NetQASM version](#NetQASM-version)
-  - [Cite this work](#📚-Cite-this-work)
+  - [Cite this work](#cite-this-work)
 
 ## Installation
 You can install NetQMPI using pip:
@@ -149,17 +149,17 @@ def main(app_config=None, phi=0.0, theta=0.0):
 
 If you use **NetQMPI** in your research, please cite the following works:
 
-### NetQMPI: a practical MPI-inspired library for distributed quantum computing over NetQASM SDK
-**F. Javier Cardama**, **Tomás F. Pena**  
-*Proceedings of the IEEE International Conference on Cluster Computing (IEEE Cluster 2025)*  
-DOI: [10.1109/CLUSTERWorkshops65972.2025.11164201](https://doi.org/10.1109/CLUSTERWorkshops65972.2025.11164201)
+> ### NetQMPI: a practical MPI-inspired library for distributed quantum computing over NetQASM SDK
+> **F. Javier Cardama**, **Tomás F. Pena**  
+> *Proceedings of the IEEE International Conference on Cluster Computing (IEEE Cluster 2025)*  
+> DOI: [10.1109/CLUSTERWorkshops65972.2025.11164201](https://doi.org/10.1109/CLUSTERWorkshops65972.2025.11164201)
 
 ---
 
-### NetQIR: An Extension of QIR for Distributed Quantum Computing
-**F. Javier Cardama**, **Jorge Vázquez-Pérez**, **C. Piñeiro**, **T. F. Pena**, **J. C. Pichel**, **Andrés Gómez**  
-*Future Generation Computer Systems*, Vol. 174, 2026, Article 107989  
-DOI: [10.1016/j.future.2025.107989](https://doi.org/10.1016/j.future.2025.107989)
+> ### NetQIR: An Extension of QIR for Distributed Quantum Computing
+> **F. Javier Cardama**, **Jorge Vázquez-Pérez**, **C. Piñeiro**, **T. F. Pena**, **J. C. Pichel**, **Andrés Gómez**
+> *Future Generation Computer Systems*, Vol. 174, 2026, Article 107989
+> DOI: [10.1016/j.future.2025.107989](https://doi.org/10.1016/j.future.2025.107989)
 
 ---
 
