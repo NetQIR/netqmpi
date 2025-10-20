@@ -1,18 +1,35 @@
-# Net-QMPI
-Net-QMPI is a Python package that provides a partial implementation of the Quantum Message Passing Interface (QMPI) and a full implementation of the Net Quantum Intermediate Representation (NetQIR) on top of the NetQASM SDK. NetQASM is a high-level framework designed to enable quantum network programming, supporting execution on simulators such as SimulaQron and NetSquid.
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/NetQIR/netqmpi/refs/heads/main/logo-light.svg">
+    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/NetQIR/netqmpi/refs/heads/main/logo-dark.svg">
+    <img alt="Shows a black logo in light color mode and a white one in dark color mode." src="https://user-images.githubusercontent.com/25423296/163456779-a8556205-d0a5-45e2-ac17-42d089e3c3f8.png">
+  </picture>
+</p>
 
-Like NetQIR, Net-QMPI aims to facilitate distributed quantum computing by enabling the execution of quantum programs across multiple nodes in a quantum network. This sets it apart from NetQASM’s original focus on programming individual quantum network nodes. Inspired by the classical MPI (Message Passing Interface) paradigm, Net-QMPI abstracts communication and follows a Single Program Multiple Data (SPMD) model adapted to quantum systems. This allows quantum programmers to develop distributed quantum applications in a style familiar from classical high-performance computing, making distributed quantum programming more accessible, modular, and portable.
+
+NetQMPI is a Python package that provides a partial implementation of the Quantum Message Passing Interface (QMPI) and a full implementation of the Net Quantum Intermediate Representation (NetQIR) on top of the NetQASM SDK. NetQASM is a high-level framework designed to enable quantum network programming, supporting execution on simulators such as SimulaQron and NetSquid.
+
+Like NetQIR, NetQMPI aims to facilitate distributed quantum computing by enabling the execution of quantum programs across multiple nodes in a quantum network. This sets it apart from NetQASM’s original focus on programming individual quantum network nodes. Inspired by the classical MPI (Message Passing Interface) paradigm, NetQMPI abstracts communication and follows a Single Program Multiple Data (SPMD) model adapted to quantum systems. This allows quantum programmers to develop distributed quantum applications in a style familiar from classical high-performance computing, making distributed quantum programming more accessible, modular, and portable.
+
+## 🗂️ Table of Contents
+
+  - [📦 Installation](#📦-Installation)
+  - [Case of use example: send and receive a qubit](#Case-of-use-example-send-and-receive-a-qubit)
+    - [NetQMPI version](#NetQMPI-version)
+    - [NetQASM version](#NetQASM-version)
+  - [📚 Cite this work](#📚-Cite-this-work)
 
 ## 📦 Installation
 You can install NetQMPI using pip:
 
 ```bash
-pip install netqmpi
+pip install netqmpi netqasm
 ```
 
+It is important have installed previously any [NetQASM](https://github.com/QuTech-Delft/netqasm) backend as [SquidASM](https://github.com/QuTech-Delft/squidasm) or [Simulaqron](https://github.com/SoftwareQuTech/SimulaQron). For more information about the installation of NetQASM, please refer to [NetQASM Documentation](https://netqasm.readthedocs.io/en/stable/installation.html).
 
-## Example
-### Send and receive
+
+## Case of use example: send and receive a qubit
 
 The repository includes a code example demonstrating a simple send/receive interaction between two quantum nodes, following a client-server style pattern. This example serves to highlight the differences between low-level NetQASM programming and the high-level abstraction provided by Net-QMPI.
 
@@ -128,5 +145,22 @@ def main(app_config=None, phi=0.0, theta=0.0):
     return {"m1": m1, "m2": m2}
 ```
 
-## Dependencies
-- [NetQASM](https://netqasm.readthedocs.io/en/release-1.0/) >= 1.0.0
+## 📚 Cite this work
+
+If you use **NetQMPI** in your research, please cite the following works:
+
+### NetQMPI: a practical MPI-inspired library for distributed quantum computing over NetQASM SDK
+**F. Javier Cardama**, **Tomás F. Pena**  
+*Proceedings of the IEEE International Conference on Cluster Computing (IEEE Cluster 2025)*  
+DOI: [10.1109/CLUSTERWorkshops65972.2025.11164201](https://doi.org/10.1109/CLUSTERWorkshops65972.2025.11164201)
+
+---
+
+### NetQIR: An Extension of QIR for Distributed Quantum Computing
+**F. Javier Cardama**, **Jorge Vázquez-Pérez**, **C. Piñeiro**, **T. F. Pena**, **J. C. Pichel**, **Andrés Gómez**  
+*Future Generation Computer Systems*, Vol. 174, 2026, Article 107989  
+DOI: [10.1016/j.future.2025.107989](https://doi.org/10.1016/j.future.2025.107989)
+
+---
+
+> 🧠 **Tip:** You can include this section in your paper or documentation to acknowledge the original works inspiring the development of *NetQMPI*.
