@@ -11,15 +11,15 @@ NetQMPI is a Python package that provides a partial implementation of the Quantu
 
 Like NetQIR, NetQMPI aims to facilitate distributed quantum computing by enabling the execution of quantum programs across multiple nodes in a quantum network. This sets it apart from NetQASM’s original focus on programming individual quantum network nodes. Inspired by the classical MPI (Message Passing Interface) paradigm, NetQMPI abstracts communication and follows a Single Program Multiple Data (SPMD) model adapted to quantum systems. This allows quantum programmers to develop distributed quantum applications in a style familiar from classical high-performance computing, making distributed quantum programming more accessible, modular, and portable.
 
-## 🗂️ Table of Contents
+## Table of Contents
 
-  - [📦 Installation](#📦-Installation)
+  - [Installation](#Installation)
   - [Case of use example: send and receive a qubit](#Case-of-use-example-send-and-receive-a-qubit)
     - [NetQMPI version](#NetQMPI-version)
     - [NetQASM version](#NetQASM-version)
-  - [📚 Cite this work](#📚-Cite-this-work)
+  - [Cite this work](#📚-Cite-this-work)
 
-## 📦 Installation
+## Installation
 You can install NetQMPI using pip:
 
 ```bash
@@ -145,7 +145,7 @@ def main(app_config=None, phi=0.0, theta=0.0):
     return {"m1": m1, "m2": m2}
 ```
 
-## 📚 Cite this work
+## Cite this work
 
 If you use **NetQMPI** in your research, please cite the following works:
 
