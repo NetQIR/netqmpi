@@ -1,15 +1,13 @@
-import netqasm.runtime.debug
-from netqasm.sdk import Qubit
 from netqmpi.sdk.communicator import QMPICommunicator
 
 def main(app_config = None, rank=0, size=1):
     COMM_WORLD = QMPICommunicator(rank, size, app_config)
     ROOT_RANK = 0
 
-    with COMM_WORLD.connection:
+    with COMM_WORLD:
         qubit_exposed = []
 
-        my_qubit = Qubit(COMM_WORLD.connection)
+        my_qubit = COMM_WORLD.create_qubit()
 
         if rank == ROOT_RANK:
             qubit_exposed.append(my_qubit)
@@ -24,6 +22,6 @@ def main(app_config = None, rank=0, size=1):
 
         measure = my_qubit.measure()
 
-        COMM_WORLD.connection.flush()
+        COMM_WORLD.flush()
 
         print(f"rank_{rank} measured {measure}")

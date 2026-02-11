@@ -41,7 +41,6 @@ The comparison is structured as follows:
 
 ### NetQMPI version
 ```python
-from netqasm.sdk import Qubit
 from netqmpi.sdk.communicator import QMPICommunicator
 
 def main(app_config=None, rank=0, size=1):
@@ -50,17 +49,17 @@ def main(app_config=None, rank=0, size=1):
     next_rank = COMM_WORLD.get_next_rank(rank)
     previous_rank = COMM_WORLD.get_prev_rank(rank)
 
-    with COMM_WORLD.connection:
+    with COMM_WORLD:
         if rank == 0:
             # Create a qubit |+> to teleport
-            q = Qubit(COMM_WORLD.connection)
+            q = COMM_WORLD.create_qubit()
             q.H()
 
-            COMM_WORLD.qsend(q, next_rank)
+            COMM_WORLD.qsend([q], next_rank)
         else:
-            qubit_recv = COMM_WORLD.qrecv(previous_rank)
+            [qubit_recv] = COMM_WORLD.qrecv(previous_rank)
             measurement = qubit_recv.measure()
-            COMM_WORLD.connection.flush()
+            COMM_WORLD.flush()
 ```
 ### NetQASM version
 Node 0 (receiver):
@@ -162,5 +161,3 @@ If you use **NetQMPI** in your research, please cite the following works:
 > DOI: [10.1016/j.future.2025.107989](https://doi.org/10.1016/j.future.2025.107989)
 
 ---
-
-> 🧠 **Tip:** You can include this section in your paper or documentation to acknowledge the original works inspiring the development of *NetQMPI*.

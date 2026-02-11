@@ -21,7 +21,7 @@ class QMPICommunicator:
         self.epr_sockets = {}
         self.sockets = {}
         self.broadcast_channel = None
-        self.ghz_qubit = None
+        self.ghz_qubit = None 
 
         self.qubits_exposed = []
 
@@ -48,6 +48,21 @@ class QMPICommunicator:
         remote_app_names = [self.__get_rank_name(i) for i in range(size) if i != rank]
 
         # self.broadcast_channel = BroadcastChannelBySockets(self.__get_rank_name(rank), remote_app_names)
+
+    def __enter__(self):
+        self.connection.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return self.connection.__exit__(exc_type, exc_val, exc_tb)
+
+    def flush(self):
+        """Flush the underlying NetQASM connection."""
+        self.connection.flush()
+
+    def create_qubit(self) -> Qubit:
+        """Create a new qubit on this communicator's connection."""
+        return Qubit(self.connection)
 
     def get_epr_sockets_list(self) -> List[EPRSocket]:
         """
@@ -96,8 +111,7 @@ class QMPICommunicator:
 
         # Check if the EPR socket already exists
         if self.__get_rank_name(other_rank) not in my_eprs:
-            # Create a new EPR socket and add it to the dictionary
-            my_eprs[self.__get_rank_name(other_rank)] = EPRSocket(self.__get_rank_name(other_rank))
+            raise Exception(f"EPR socket between rank {my_rank} and rank {other_rank} does not exist")
 
         return my_eprs[self.__get_rank_name(other_rank)]
 

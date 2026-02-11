@@ -9,6 +9,13 @@ setup(
         ],
     },
     packages=find_packages(),
+    install_requires=[
+        'netqasm~=1.0.0',
+        'numpy~=1.24.3',
+    ],
+    extras_require={
+        'test': ['pytest>=7.0'],
+    },
     author='F. Javier Cardama',
     author_email='javier.cardama@usc.es',
     description='A high-level abstraction layer similar to MPI for distributed quantum programming over NetQASM.',

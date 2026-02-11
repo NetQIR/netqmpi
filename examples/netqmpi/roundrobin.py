@@ -1,4 +1,3 @@
-from netqasm.sdk import Qubit
 from netqmpi.sdk.communicator import QMPICommunicator
 
 def print_info(message, rank):
@@ -13,10 +12,10 @@ def main(app_config=None, rank=0, size=1):
     next_rank = COMM_WORLD.get_next_rank(rank)
     previous_rank = COMM_WORLD.get_prev_rank(rank)
 
-    with COMM_WORLD.connection:
+    with COMM_WORLD:
         if rank == 0:
             # Create a qubit |+> to teleport
-            q = Qubit(COMM_WORLD.connection)
+            q = COMM_WORLD.create_qubit()
             q.H()
             print_info(f"start to teleport a qubit to rank_{next_rank}", rank)
 
@@ -34,7 +33,7 @@ def main(app_config=None, rank=0, size=1):
             else:
                 # Measure the qubit
                 measurement = qubit_recv.measure()
-                COMM_WORLD.connection.flush()
+                COMM_WORLD.flush()
                 print_info(f"measurement {measurement}", rank)
 
 if __name__ == "__main__":
