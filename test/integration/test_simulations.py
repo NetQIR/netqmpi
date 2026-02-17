@@ -75,3 +75,23 @@ class TestRoundRobin:
         """roundrobin with 3 processes should complete without errors."""
         script = os.path.join(EXAMPLES_DIR, "roundrobin.py")
         simulate(script=script, num_procs=3, configuration=_make_config())
+
+
+@pytest.mark.integration
+class TestBarrier:
+    """Integration tests for barrier synchronization primitive."""
+
+    def test_barrier_two_nodes(self):
+        """barrier with 2 processes should complete without errors."""
+        script = os.path.join(EXAMPLES_DIR, "barrier.py")
+        simulate(script=script, num_procs=2, configuration=_make_config())
+
+    def test_barrier_three_nodes(self):
+        """barrier with 3 processes should complete without errors."""
+        script = os.path.join(EXAMPLES_DIR, "barrier.py")
+        simulate(script=script, num_procs=3, configuration=_make_config())
+
+    def test_barrier_four_nodes(self):
+        """barrier with 4 processes should complete without errors."""
+        script = os.path.join(EXAMPLES_DIR, "barrier.py")
+        simulate(script=script, num_procs=4, configuration=_make_config())
