@@ -160,7 +160,9 @@ class CollectiveCommTeledata(CollectiveComm):
             # Rank 0 receives notification from all other ranks
             for i in range(1, size):
                 socket = communicator.get_socket(rank, i)
-                socket.recv_structured()  # Wait for arrival message
+                msg = socket.recv_structured()
+                if msg.header != "BarrierArrival":
+                    raise ValueError(f"Expected BarrierArrival message, got {msg.header}")
             
             # All ranks have arrived, now send release signal to all
             for i in range(1, size):
@@ -172,7 +174,9 @@ class CollectiveCommTeledata(CollectiveComm):
             socket.send_structured(StructuredMessage("BarrierArrival", ()))
             
             # Wait for release signal from rank 0
-            socket.recv_structured()
+            msg = socket.recv_structured()
+            if msg.header != "BarrierRelease":
+                raise ValueError(f"Expected BarrierRelease message, got {msg.header}")
 
 class CollectiveCommTelegate(CollectiveCommTeledata):
     @staticmethod
