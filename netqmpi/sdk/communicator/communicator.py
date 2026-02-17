@@ -1,13 +1,12 @@
 from typing import List
 
 import netqasm.sdk.toolbox
-import numpy as np
-from netqasm.sdk import EPRSocket, Qubit, set_qubit_state
+from netqasm.sdk import EPRSocket, Qubit
+from netqasm.sdk.classical_communication.broadcast_channel import BroadcastChannel
 from netqasm.sdk.classical_communication.message import StructuredMessage
 from netqasm.sdk.external import Socket
 from netqasm.sdk.external import NetQASMConnection
 from netqasm.sdk.toolbox import create_ghz
-from netqasm.sdk.classical_communication.broadcast_channel import BroadcastChannel, BroadcastChannelBySockets
 
 from netqmpi.sdk.primitives.collective.collective import CollectiveCommTeledata, CollectiveCommTelegate
 from netqmpi.sdk.primitives.p2p import P2PCommTeledata
@@ -46,8 +45,6 @@ class QMPICommunicator:
 
         # Get remote app names
         remote_app_names = [self.__get_rank_name(i) for i in range(size) if i != rank]
-
-        # self.broadcast_channel = BroadcastChannelBySockets(self.__get_rank_name(rank), remote_app_names)
 
     def __enter__(self):
         self.connection.__enter__()
