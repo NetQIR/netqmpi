@@ -187,8 +187,7 @@ class CollectiveCommTelegate(CollectiveCommTeledata):
                     communicator.connection.flush()
 
             # Compute AND of all bits
-            result = np.bitwise_and.reduce(bits)
-            if result:
+            if np.bitwise_and.reduce(bits):
                 communicator.ghz_qubit.Z()
 
         else:
