@@ -58,6 +58,14 @@ class CollectiveComm(ABC):
         """
         pass
 
+    @staticmethod
+    @abstractmethod
+    def barrier(communicator: "QMPICommunicator") -> None:
+        """
+        Synchronization barrier. All ranks must reach this point before any can proceed.
+        """
+        pass
+
 class CollectiveCommTeledata(CollectiveComm):
     @staticmethod
     def qscatter(communicator: "QMPICommunicator", qubits: List[Qubit], rank_sender: int = 0) -> List[Qubit]:
@@ -131,6 +139,44 @@ class CollectiveCommTeledata(CollectiveComm):
         """
         # This method is a placeholder for future implementation
         raise NotImplementedError("Unexpose method is only available in the CollectiveCommTelegate class.")
+
+    @staticmethod
+    def barrier(communicator: "QMPICommunicator") -> None:
+        """
+        Synchronization barrier using a centralized approach.
+        Rank 0 acts as the coordinator:
+        - All non-zero ranks send a message to rank 0
+        - Rank 0 waits for all messages, then broadcasts a release signal
+        - All ranks proceed only after receiving the release
+        """
+        rank = communicator.get_rank()
+        size = communicator.get_size()
+
+        # Single process case - no synchronization needed
+        if size == 1:
+            return
+
+        if rank == 0:
+            # Rank 0 receives notification from all other ranks
+            for i in range(1, size):
+                socket = communicator.get_socket(rank, i)
+                msg = socket.recv_structured()
+                if msg.header != "BarrierArrival":
+                    raise ValueError(f"Expected BarrierArrival message, got {msg.header}")
+            
+            # All ranks have arrived, now send release signal to all
+            for i in range(1, size):
+                socket = communicator.get_socket(rank, i)
+                socket.send_structured(StructuredMessage("BarrierRelease", ()))
+        else:
+            # Non-zero ranks send arrival notification to rank 0
+            socket = communicator.get_socket(rank, 0)
+            socket.send_structured(StructuredMessage("BarrierArrival", ()))
+            
+            # Wait for release signal from rank 0
+            msg = socket.recv_structured()
+            if msg.header != "BarrierRelease":
+                raise ValueError(f"Expected BarrierRelease message, got {msg.header}")
 
 class CollectiveCommTelegate(CollectiveCommTeledata):
     @staticmethod

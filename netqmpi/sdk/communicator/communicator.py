@@ -180,3 +180,12 @@ class QMPICommunicator:
         """
 
         CollectiveCommTelegate.unexpose(self, rank)
+
+    def barrier(self):
+        """
+        Synchronization barrier. All ranks must reach this point before any can proceed.
+        This is useful for ensuring all ranks have completed their work before proceeding
+        to the next phase of computation.
+        :return: None
+        """
+        CollectiveCommTeledata.barrier(self)
