@@ -1,10 +1,13 @@
+from netqmpi.sdk.communicator.communicator import QMPICommunicator
+
+
 def print_info(message, rank):
     """
     Print the message with the rank number.
     """
     print(f"rank_{rank}: {message}")
 
-def main(comm=None):
+def main(comm : QMPICommunicator = None):
     rank = comm.get_rank()
     size = comm.get_size()
     next_rank = comm.get_next_rank(rank)

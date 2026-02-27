@@ -1,4 +1,6 @@
-def main(comm=None):
+from netqmpi.sdk.communicator.communicator import QMPICommunicator
+
+def main(comm : QMPICommunicator = None):
     rank = comm.get_rank()
     ROOT_RANK = 0
 
