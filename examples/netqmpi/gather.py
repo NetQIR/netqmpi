@@ -1,4 +1,4 @@
-from netqmpi.sdk.communicator import QMPICommunicator
+from netqmpi.sdk.communicator.communicator import QMPICommunicator
 
 def print_info(message, rank):
     """
@@ -6,27 +6,26 @@ def print_info(message, rank):
     """
     print(f"rank_{rank}: {message}")
 
-def main(app_config=None, rank=0, size=1):
-    COMM_WORLD = QMPICommunicator(rank, size, app_config)
-
-    my_rank = COMM_WORLD.get_rank()
+def main(comm : QMPICommunicator = None):
+    rank = comm.get_rank()
+    size = comm.get_size()
     ROOT_RANK = 0
 
-    with COMM_WORLD:
+    with comm:
         # Create a qubit |++++> to gather between the nodes
-        local_qubits = [COMM_WORLD.create_qubit() for _ in range(size)]
+        local_qubits = [comm.create_qubit() for _ in range(size)]
         for q in local_qubits:
             q.H()
 
-        full_qubits = COMM_WORLD.qgather(local_qubits, ROOT_RANK)
-        COMM_WORLD.flush()
+        full_qubits = comm.qgather(local_qubits, ROOT_RANK)
+        comm.flush()
 
-        if my_rank == ROOT_RANK:
+        if rank == ROOT_RANK:
             # Measure the qubits
             binary_code = []
             for q in full_qubits:
                 value = q.measure()
-                COMM_WORLD.flush()
+                comm.flush()
                 print_info(f"{q}-{value}", rank)
 
 if __name__ == "__main__":

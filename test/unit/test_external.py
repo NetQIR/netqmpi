@@ -99,17 +99,17 @@ class TestAppInstanceFromFileCreation:
         finally:
             os.unlink(path)
 
-    def test_argv_contains_rank_and_size(self):
+    def test_argv_does_not_contain_rank_or_size(self):
         from netqmpi.sdk.external import app_instance_from_file
         path = self._create_temp_script()
         try:
             with patch('netqmpi.sdk.external.env.load_roles_config', return_value=None):
                 app_instance = app_instance_from_file(path, num_processes=2)
                 inputs = app_instance.program_inputs
-                assert inputs["rank_0"]["rank"] == 0
-                assert inputs["rank_0"]["size"] == 2
-                assert inputs["rank_1"]["rank"] == 1
-                assert inputs["rank_1"]["size"] == 2
+                assert "rank" not in inputs["rank_0"]
+                assert "size" not in inputs["rank_0"]
+                assert "rank" not in inputs["rank_1"]
+                assert "size" not in inputs["rank_1"]
         finally:
             os.unlink(path)
 
@@ -133,7 +133,65 @@ class TestAppInstanceFromFileCreation:
             with patch('netqmpi.sdk.external.env.load_roles_config', return_value=None):
                 app_instance = app_instance_from_file(path, num_processes=1)
                 assert len(app_instance.app.programs) == 1
-                assert app_instance.program_inputs["rank_0"]["rank"] == 0
-                assert app_instance.program_inputs["rank_0"]["size"] == 1
+                assert "rank" not in app_instance.program_inputs["rank_0"]
+                assert "size" not in app_instance.program_inputs["rank_0"]
         finally:
             os.unlink(path)
+
+
+class TestCommunicatorInjector:
+    """Tests for the _make_communicator_injector wrapper."""
+
+    def test_wrapper_creates_communicator_and_injects_as_comm(self):
+        from netqmpi.sdk.external import _make_communicator_injector
+        from unittest.mock import MagicMock, patch
+
+        received = {}
+
+        def fake_main(comm=None):
+            received['comm'] = comm
+
+        with patch('netqmpi.sdk.external.QMPICommunicator') as MockComm:
+            mock_instance = MagicMock()
+            MockComm.return_value = mock_instance
+            mock_app_config = MagicMock()
+
+            wrapper = _make_communicator_injector(fake_main, rank=1, size=3)
+            wrapper(app_config=mock_app_config)
+
+            MockComm.assert_called_once_with(1, 3, mock_app_config)
+            assert received['comm'] is mock_instance
+
+    def test_wrapper_captures_rank_and_size_in_closure(self):
+        from netqmpi.sdk.external import _make_communicator_injector
+        from unittest.mock import MagicMock, patch
+
+        with patch('netqmpi.sdk.external.QMPICommunicator') as MockComm:
+            MockComm.return_value = MagicMock()
+            wrapper_0 = _make_communicator_injector(lambda comm=None: None, rank=0, size=4)
+            wrapper_2 = _make_communicator_injector(lambda comm=None: None, rank=2, size=4)
+
+            wrapper_0(app_config=None)
+            wrapper_2(app_config=None)
+
+            calls = MockComm.call_args_list
+            assert calls[0][0] == (0, 4, None)
+            assert calls[1][0] == (2, 4, None)
+
+    def test_entry_points_are_wrapped(self):
+        from netqmpi.sdk.external import app_instance_from_file
+        import tempfile, os
+        from unittest.mock import patch
+
+        f = tempfile.NamedTemporaryFile(suffix=".py", mode='w', delete=False)
+        f.write("def main(comm=None): pass\n")
+        f.flush()
+        f.close()
+        try:
+            with patch('netqmpi.sdk.external.env.load_roles_config', return_value=None):
+                app_instance = app_instance_from_file(f.name, num_processes=2)
+                # The entry is the wrapper, not the original main
+                for prog in app_instance.app.programs:
+                    assert prog.entry.__name__ == "wrapper"
+        finally:
+            os.unlink(f.name)
