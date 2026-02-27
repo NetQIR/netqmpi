@@ -8,6 +8,9 @@ from netqasm.runtime import env
 from netqasm.runtime.application import ApplicationInstance, Program, Application
 from netqasm.util.yaml import load_yaml
 
+from netqmpi.sdk.communicator.communicator import QMPICommunicator
+
+
 def import_module_from_path(path):
     module_name = os.path.splitext(os.path.basename(path))[0]
 
@@ -19,6 +22,20 @@ def import_module_from_path(path):
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
     return module
+
+def _make_communicator_injector(main_func, rank: int, size: int):
+    """Wrap *main_func* so that NetQMPI injects a QMPICommunicator as 'comm'.
+
+    The returned wrapper accepts the ``app_config`` injected by NetQASM and
+    uses it together with the captured *rank* and *size* to construct a
+    :class:`QMPICommunicator` before forwarding it to the original *main_func*
+    as the ``comm`` keyword argument.
+    """
+    def wrapper(app_config=None):
+        comm = QMPICommunicator(rank, size, app_config)
+        return main_func(comm=comm)
+    return wrapper
+
 
 def app_instance_from_file(file: str = None, num_processes: int = 2,
                            argv_file: str = None,
@@ -59,10 +76,10 @@ def app_instance_from_file(file: str = None, num_processes: int = 2,
         if main_func is None:
             raise ValueError(f"main function not found in {program_file}")
 
-        prog = Program(party=rank, entry=main_func, args=[], results=[])
+        rank_int = int(rank.split("_")[-1])
+        wrapped_main = _make_communicator_injector(main_func, rank_int, num_processes)
+        prog = Program(party=rank, entry=wrapped_main, args=[], results=[])
         programs += [prog]
-        current_argv["rank"] = int(rank.split("_")[-1])
-        current_argv["size"] = num_processes
         argv_per_rank[rank] = current_argv
 
     roles = env.load_roles_config(roles_cfg_file)
