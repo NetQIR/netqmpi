@@ -5,8 +5,8 @@ Implements the Executor interface to work with Cunqa.
 """
 from typing import Dict, Any, List
 
-from netqmpi.sdk.core.executor import Executor
-from netqmpi.sdk.adapters.cunqa.cunqa_circuit import CunqaCircuitAdapter
+from netqmpi.runtime.executor import Executor
+from netqmpi.sdk.adapters.cunqa_circuit import CunqaCircuitAdapter
 
 
 class CunqaExecutorAdapter(Executor):

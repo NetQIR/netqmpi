@@ -1,4 +1,5 @@
 from netqmpi.sdk.communicator.communicator import QMPICommunicator
+from netqmpi.sdk.core.circuit import Circuit
 
 def print_info(message, rank):
     """
@@ -13,16 +14,15 @@ def main(comm : QMPICommunicator = None):
 
     with comm:
         # Create a qubit |++++> to gather between the nodes
-        local_qubits = [comm.create_qubit() for _ in range(size)]
-        for q in local_qubits:
-            q.H()
+        circuit = Circuit(size, size)
+        for q in range(size):
+            circuit.H(q)
 
-        full_qubits = comm.qgather(local_qubits, ROOT_RANK)
+        full_qubits = comm.qgather(circuit, local_qubits, ROOT_RANK)
         comm.flush()
 
         if rank == ROOT_RANK:
             # Measure the qubits
-            binary_code = []
             for q in full_qubits:
                 value = q.measure()
                 comm.flush()

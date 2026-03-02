@@ -7,7 +7,6 @@ from typing import List
 
 from netqmpi.sdk.core.circuit import Circuit
 
-
 class CunqaCircuitAdapter(Circuit):
     """
     Adapter that implements Circuit for the Cunqa backend.

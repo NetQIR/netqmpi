@@ -4,7 +4,7 @@ Base abstraction for quantum circuit executors.
 Defines the contract that all quantum backend adapters must follow.
 """
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 
 class Executor(ABC):
@@ -41,17 +41,6 @@ class Executor(ABC):
         return self._config
     
     @abstractmethod
-    def operations_supported(self) -> List[str]:
-        """
-        Returns the list of operations supported by this executor.
-        
-        Returns:
-            List of supported quantum operation names.
-            Examples: ['H', 'CNOT', 'X', 'Y', 'Z', 'T', 'S', 'measure']
-        """
-        pass
-    
-    @abstractmethod
     def create_circuit(self, num_qubits: int, num_clbits: int):
         """
         Factory Method: Creates a backend-specific quantum circuit.
@@ -63,4 +52,20 @@ class Executor(ABC):
         Returns:
             Backend-specific Circuit instance.
         """
+        pass
+    
+    @abstractmethod
+    def build_app(self, script: str, num_processes: int) -> Any:
+        pass
+
+    @abstractmethod
+    def load_network_cfg(self, app_dir: str, user_network_cfg: Optional[Any]) -> Any:
+        pass
+
+    @abstractmethod
+    def run(self, *, app_instance: Any, configuration: Any) -> None:
+        pass
+
+    @abstractmethod
+    def postprocess_logs(self, configuration: Any) -> None:
         pass
