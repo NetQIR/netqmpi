@@ -1,0 +1,14 @@
+name: netqmpi
+
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.10
+  - numpy=1.24.3
+  - setuptools=75.1
+  - pytest>=7.0
+  - pip
+  - pip:
+      - netqasm~=1.0.0
