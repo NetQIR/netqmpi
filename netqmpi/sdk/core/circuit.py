@@ -7,10 +7,44 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Iterator, List, Optional
 
+from netqmpi.sdk.core.operations.qmpi import (
+    Expose, QGather, QRecv, QScatter, QSend, Unexpose,
+)
 from netqmpi.sdk.core.operations.container import OperationContainer
 from netqmpi.sdk.core.operations.gate import ControlledGate, Gate
 from netqmpi.sdk.core.operations.non_unitary import Barrier, Measure, Reset
 from netqmpi.sdk.core.operations.operation import Operation
+
+
+class _ExposeContext:
+    """
+    Context manager returned by :meth:`Circuit.expose`.
+
+    On entry  → appends :class:`~netqmpi.sdk.core.operations.Expose` to the circuit.
+    On exit   → appends the matching :class:`~netqmpi.sdk.core.operations.Unexpose`
+                automatically, even if the body raises an exception.
+
+    Usage::
+
+        with circuit.expose([0, 1], rank=0):
+            circuit.h(0).cx(0, 1)
+        # Unexpose(rank=0) has been added here
+    """
+
+    def __init__(self, circuit: "Circuit", qubits: List[int], rank: int) -> None:
+        self._circuit = circuit
+        self._qubits = qubits
+        self._rank = rank
+
+    def __enter__(self) -> "Circuit":
+        """Appends Expose and returns the circuit for further chaining."""
+        self._circuit._add(Expose(self._qubits, self._rank))
+        return self._circuit
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+        """Appends Unexpose regardless of whether the body raised."""
+        self._circuit._add(Unexpose(self._rank))
+        return False  # never suppress exceptions
 
 
 class Circuit(ABC):
@@ -255,6 +289,67 @@ class Circuit(ABC):
             for q in qubits:
                 self._check_qubit(q)
         return self._add(Barrier(qubits))
+
+    # ------------------------------------------------------------------
+    # Fluent API — inter-rank communication primitives
+    # ------------------------------------------------------------------
+
+    def qsend(self, qubits: List[int], dest_rank: int) -> Circuit:
+        """
+        Send *qubits* to *dest_rank*.
+
+        The adapter chooses the transfer protocol (e.g. teleportation).
+        """
+        for q in qubits:
+            self._check_qubit(q)
+        return self._add(QSend(qubits, dest_rank))
+
+    def qrecv(self, qubits: List[int], src_rank: int) -> Circuit:
+        """
+        Receive qubits from *src_rank* into local qubit slots *qubits*.
+
+        ``len(qubits)`` determines how many qubits are expected.
+        """
+        for q in qubits:
+            self._check_qubit(q)
+        return self._add(QRecv(qubits, src_rank))
+
+    def qscatter(self, qubits: List[int], sender_rank: int) -> Circuit:
+        """Scatter *qubits* from *sender_rank* across all ranks."""
+        for q in qubits:
+            self._check_qubit(q)
+        return self._add(QScatter(qubits, sender_rank))
+
+    def qgather(self, qubits: List[int], recv_rank: int) -> Circuit:
+        """Contribute *qubits* to a gather into *recv_rank*."""
+        for q in qubits:
+            self._check_qubit(q)
+        return self._add(QGather(qubits, recv_rank))
+
+    def expose(self, qubits: List[int], rank: int = 0) -> _ExposeContext:
+        """
+        Expose *qubits* to the network via a shared GHZ state.
+
+        Returns an :class:`_ExposeContext` that can be used as a
+        ``with`` statement.  The matching :class:`Unexpose` is appended
+        automatically when the ``with`` block exits::
+
+            with circuit.expose([0], rank=0):
+                circuit.h(0)
+            # Unexpose(rank=0) inserted here
+
+        Args:
+            qubits: Local qubit indices to expose.
+            rank:   Exposer rank (default: 0).
+        """
+        for q in qubits:
+            self._check_qubit(q)
+        return _ExposeContext(self, qubits, rank)
+
+    def unexpose(self, rank: int = 0) -> Circuit:
+        """Manually close an expose window for *rank* (use :meth:`expose` as a
+        context manager instead when possible)."""
+        return self._add(Unexpose(rank))
 
     # ------------------------------------------------------------------
     # Iteration helper
