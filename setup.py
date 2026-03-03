@@ -11,7 +11,7 @@ setup(
     packages=find_packages(),
     install_requires=[
         'netqasm~=1.0.0',
-        'numpy~=1.24.3',
+        'numpy~=1.26.4',
     ],
     extras_require={
         'test': ['pytest>=7.0'],

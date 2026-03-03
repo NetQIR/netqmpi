@@ -4,6 +4,10 @@ Circuit adapter for the Cunqa backend.
 Implements the Circuit interface to work with Cunqa circuits.
 """
 from typing import List
+import os, sys
+sys.path.append(os.getenv("HOME"))
+
+from cunqa.circuit.core import CunqaCircuit
 
 from netqmpi.sdk.core.circuit import Circuit
 
@@ -15,7 +19,7 @@ class CunqaCircuitAdapter(Circuit):
     the common interface defined in the abstract Circuit class.
     """
     
-    def __init__(self, num_qubits: int, num_clbits: int):
+    def __init__(self, num_qubits: int, num_clbits: int, rank):
         """
         Initialize the Cunqa circuit.
         
@@ -25,7 +29,19 @@ class CunqaCircuitAdapter(Circuit):
         """
         super().__init__(num_qubits, num_clbits)
         # TODO: Initialize the underlying Cunqa circuit
-        self._cunqa_circuit = None  # This would be the actual Cunqa object
+        self._cunqa_circuit = CunqaCircuit(num_qubits, num_clbits, id=f"rank_{rank}")
+    
+    def H(self, q):
+        self._cunqa_circuit.h(q)
+        
+    def measure(self, q, c):
+        self._cunqa_circuit.measure(q, c)
+        
+    def qsend(self, q, rank):
+        self._cunqa_circuit.qsend(q, f"rank_{rank}")
+    
+    def qrecv(self, q, rank):
+        self._cunqa_circuit.qrecv(q, f"rank_{rank}")
     
     def operations_supported(self) -> List[str]:
         """

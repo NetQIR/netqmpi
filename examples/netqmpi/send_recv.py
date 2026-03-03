@@ -1,4 +1,5 @@
 from netqmpi.sdk.communicator.communicator import QMPICommunicator
+from netqmpi.sdk.environment import Environment
 
 def print_info(message, rank):
     """
@@ -6,7 +7,7 @@ def print_info(message, rank):
     """
     print(f"rank_{rank}: {message}")
 
-def main(comm : QMPICommunicator = None):
+def main(env: Environment = None, comm: QMPICommunicator = None):
     rank = comm.get_rank()
     next_rank = comm.get_next_rank(rank)
     previous_rank = comm.get_prev_rank(rank)
@@ -14,16 +15,15 @@ def main(comm : QMPICommunicator = None):
     with comm:
         if rank == 0:
             # Create a qubit |+> to teleport
-            q = comm.create_qubit()
-            q.H()
+            circuit = env.create_circuit(1, 0, rank)
+            circuit.H(0)
             print_info(f"start to teleport a qubit to rank_{next_rank}", rank)
 
-            comm.qsend([q], next_rank)
+            comm.qsend(circuit, 0, next_rank)
         else:
-            [qubit_recv] = comm.qrecv(previous_rank)
-            measurement = qubit_recv.measure()
-            comm.flush()
-            print_info(f"measure: {measurement}", rank)
+            circuit = env.create_circuit(1, 1, rank)
+            comm.qrecv(circuit, 0, previous_rank)
+            circuit.measure(0, 0)
 
 if __name__ == "__main__":
     main()

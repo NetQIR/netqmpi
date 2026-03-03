@@ -11,10 +11,10 @@ from netqmpi.sdk.communicator import QMPICommunicator
 from netqmpi.helpers import load_main
 
 
-from netqasm.runtime import env
-from netqasm.runtime.application import ApplicationInstance, Program, Application
-from netqasm.sdk.external import simulate_application
-from netqasm.sdk.external import NetQASMConnection
+#from netqasm.runtime import env
+#from netqasm.runtime.application import ApplicationInstance, Program, Application
+#from netqasm.sdk.external import simulate_application
+#from netqasm.sdk.external import NetQASMConnection
 
 class NetQASMExecutorAdapter(Executor):
     """
@@ -34,9 +34,9 @@ class NetQASMExecutorAdapter(Executor):
         """
         super().__init__(size, config)
         
-        self.connection = NetQASMConnection(
+        """self.connection = NetQASMConnection(
             app_name=config.app_name, log_config=config.log, epr_sockets=self.epr_sockets_list
-        )
+        )"""
         # TODO: Initialize NetQASM-specific resources
     
     def connect():
@@ -56,14 +56,7 @@ class NetQASMExecutorAdapter(Executor):
         return NetQASMCircuitAdapter(num_qubits, num_clbits)
     
     def build_app(self, script: str, num_processes: int) -> Any:
-        if script is None:
-            raise ValueError("script must be provided")
-        if not script.endswith(".py"):
-            raise ValueError("script must be a .py script")
-
-        main_func = load_main(script)
-        if main_func is None:
-                raise ValueError(f"main function not found in {script}")
+        """main_func = load_main(script)
 
         programs = []
         for rank in range(num_processes):
@@ -90,14 +83,15 @@ class NetQASMExecutorAdapter(Executor):
             logging_cfg=None
         )
 
-        return app_instance
+        return app_instance"""
+        return None
 
     def load_network_cfg(self, app_dir: str, user_network_cfg: Optional[Any]) -> Any:
         # TODO: Hago la configuración
         return {}
 
-    def run(self, *, app_instance: Any, configuration: Any) -> None:
-        simulate_application(
+    def run(self, app_instance: Any, configuration: Any) -> None:
+        """simulate_application(
             app_instance=app_instance,
             num_rounds=configuration.num_rounds,
             network_cfg=configuration.network_config,
@@ -107,7 +101,7 @@ class NetQASMExecutorAdapter(Executor):
             use_app_config=configuration.use_app_config,
             enable_logging=configuration.enable_logging,
             hardware=configuration.hardware,
-        )
+        )"""
 
     def postprocess_logs(self, configuration: Any) -> None:
         pass

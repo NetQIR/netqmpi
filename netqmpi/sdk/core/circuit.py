@@ -108,29 +108,6 @@ class Circuit(ABC):
             e.g. ``['H', 'CX', 'RZ', 'measure', 'reset']``.
         """
 
-    @abstractmethod
-    def translate(self, op: Operation) -> Any:
-        """
-        Translate a generic :class:`~netqmpi.sdk.core.operations.Operation`
-        into a backend-native instruction.
-
-        Args:
-            op: The operation to translate.
-
-        Returns:
-            A backend-specific object (gate call, instruction, …).
-        """
-
-    @abstractmethod
-    def build(self) -> Any:
-        """
-        Materialise the circuit for the backend by translating every
-        operation in :attr:`ops` via :meth:`translate`.
-
-        Returns:
-            A backend-native circuit object ready for execution.
-        """
-
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------

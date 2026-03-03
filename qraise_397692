@@ -1,0 +1,16 @@
+srun: Job step's --cpus-per-task value exceeds that of job (4 > 2). Job step may never run.
+(03/03/26 07:20:22 PM) [Executor 397692] debug: Raising executor with Maestro.  0ms
+(03/03/26 07:20:22 PM) [QPU 397692_0] debug: Raising QPU with quantum communications.  1ms
+(03/03/26 07:20:22 PM) [QPU 397692_0] debug: QPU going to turn on with MaestroQCSimulator.  0ms
+Library: Unable to load library, error: libcomposer_gpu_simulators.so: cannot open shared object file: No such file or directory
+GpuLibrary: Unable to load gpu library
+(03/03/26 07:20:22 PM) [Executor 397692] debug: Maestro dynamic simulation  26ms
+(03/03/26 07:20:22 PM) [QPU 397692_1] debug: Raising QPU with quantum communications.  1ms
+(03/03/26 07:20:22 PM) [QPU 397692_1] debug: QPU going to turn on with MaestroQCSimulator.  0ms
+(03/03/26 07:20:22 PM) [QPU 397692_0] debug: Server bound to tcp://10.5.7.3:32925  20ms
+(03/03/26 07:20:22 PM) [QPU 397692_1] debug: Server bound to tcp://10.5.7.3:45865  21ms
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+slurmstepd-c7-3: error: *** JOB 397692 ON c7-3 CANCELLED AT 2026-03-03T19:20:22 ***
+slurmstepd-c7-3: error: *** STEP 397692.0 ON c7-3 CANCELLED AT 2026-03-03T19:20:22 ***
+slurmstepd-c7-3: error: *** STEP 397692.1 ON c7-3 CANCELLED AT 2026-03-03T19:20:22 ***

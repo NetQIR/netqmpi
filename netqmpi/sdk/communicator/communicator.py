@@ -1,21 +1,21 @@
 from typing import List
 
+from netqmpi.sdk.core.circuit import Circuit
 from netqmpi.sdk.primitives.collective.collective import CollectiveCommTeledata, CollectiveCommTelegate
 from netqmpi.sdk.primitives.p2p import P2PCommTeledata
 
 class QMPICommunicator:
-    def __init__(self, rank, size, executor, app_config):
+    def __init__(self, rank, size, executor, app_config = None):
         self.rank = rank
         self.size = size
         self.app_config = app_config
         self.executor = executor
 
     def __enter__(self):
-        self.executor.connect()
-        return self
+        pass
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        return self.connection.__exit__(exc_type, exc_val, exc_tb)
+        pass
 
     def get_rank(self) -> int:
         return self.rank
@@ -26,31 +26,28 @@ class QMPICommunicator:
     def get_prev_rank(self, rank: int) -> int:
         return (rank - 1) % self.size
 
-    def __get_rank_name(self, rank: int) -> str:
-        return f"rank_{rank}"
-
     def get_size(self) -> int:
         return self.size
 
-    def qsend(self, qubits: List[Qubit], dest_rank: int):
+    def qsend(self, circuit, qubits: List[int], dest_rank: int):
         """
         Send a qubit to the destination rank using teleportation.
         """
-        P2PCommTeledata.qsend(self, qubits, dest_rank)
+        circuit.qsend(qubits, dest_rank)
 
-    def qrecv(self, src_rank: int) -> List[Qubit]:
+    def qrecv(self, circuit, qubits: List[int], src_rank: int) -> List[int]:
         """
         Receive a qubit from the source rank using teleportation.
         """
-        return P2PCommTeledata.qrecv(self, src_rank)
+        return circuit.qrecv(qubits, src_rank)
 
-    def qscatter(self, qubits: List[Qubit], rank_sender: int) -> List[Qubit]:
+    def qscatter(self, qubits: List[int], rank_sender: int) -> List[int]:
         return CollectiveCommTeledata.qscatter(self, qubits, rank_sender)
 
-    def qgather(self, qubits: List[Qubit], rank_recv: int) -> List[Qubit]:
+    def qgather(self, qubits: List[int], rank_recv: int) -> List[int]:
         return CollectiveCommTeledata.qgather(self, qubits, rank_recv)
 
-    def expose(self, qubits: List[Qubit], rank: int = 0):
+    def expose(self, qubits: List[int], rank: int = 0):
         """
         Expose qubits to the network.
         :param qubits: List of qubits to expose.

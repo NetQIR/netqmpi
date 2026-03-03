@@ -18,7 +18,7 @@ def main(comm : QMPICommunicator = None):
         for q in range(size):
             circuit.H(q)
 
-        full_qubits = comm.qgather(circuit, local_qubits, ROOT_RANK)
+        full_qubits = comm.qgather(circuit, [], ROOT_RANK)
         comm.flush()
 
         if rank == ROOT_RANK:

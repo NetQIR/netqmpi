@@ -63,7 +63,7 @@ class Executor(ABC):
         pass
 
     @abstractmethod
-    def run(self, *, app_instance: Any, configuration: Any) -> None:
+    def run(self, app: Any, configuration: Any) -> None:
         pass
 
     @abstractmethod
