@@ -1,4 +1,4 @@
-from netqmpi.sdk.communicator.communicator import QMPICommunicator
+from netqmpi.sdk.core.environment import Environment
 
 
 def print_info(message, rank):
@@ -7,7 +7,8 @@ def print_info(message, rank):
     """
     print(f"rank_{rank}: {message}")
 
-def main(comm : QMPICommunicator = None):
+def main(env: Environment = None):
+    comm = env.comm
     rank = comm.get_rank()
     size = comm.get_size()
     next_rank = comm.get_next_rank(rank)

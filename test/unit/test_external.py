@@ -139,37 +139,44 @@ class TestAppInstanceFromFileCreation:
             os.unlink(path)
 
 
-class TestCommunicatorInjector:
-    """Tests for the _make_communicator_injector wrapper."""
+class TestEnvironmentInjector:
+    """Tests for the _make_environment_injector wrapper."""
 
-    def test_wrapper_creates_communicator_and_injects_as_comm(self):
-        from netqmpi.sdk.external import _make_communicator_injector
+    def test_wrapper_creates_environment_and_injects_as_env(self):
+        from netqmpi.sdk.external import _make_environment_injector
         from unittest.mock import MagicMock, patch
 
         received = {}
 
-        def fake_main(comm=None):
-            received['comm'] = comm
+        def fake_main(env=None):
+            received['env'] = env
 
-        with patch('netqmpi.sdk.external.QMPICommunicator') as MockComm:
-            mock_instance = MagicMock()
-            MockComm.return_value = mock_instance
+        mock_executor = MagicMock()
+        with patch('netqmpi.sdk.external.QMPICommunicator') as MockComm, \
+             patch('netqmpi.sdk.external.Environment') as MockEnv:
+            mock_comm_instance = MagicMock()
+            mock_env_instance = MagicMock()
+            MockComm.return_value = mock_comm_instance
+            MockEnv.return_value = mock_env_instance
             mock_app_config = MagicMock()
 
-            wrapper = _make_communicator_injector(fake_main, rank=1, size=3)
+            wrapper = _make_environment_injector(fake_main, rank=1, size=3, executor=mock_executor)
             wrapper(app_config=mock_app_config)
 
             MockComm.assert_called_once_with(1, 3, mock_app_config)
-            assert received['comm'] is mock_instance
+            MockEnv.assert_called_once_with(mock_comm_instance, mock_executor)
+            assert received['env'] is mock_env_instance
 
     def test_wrapper_captures_rank_and_size_in_closure(self):
-        from netqmpi.sdk.external import _make_communicator_injector
+        from netqmpi.sdk.external import _make_environment_injector
         from unittest.mock import MagicMock, patch
 
-        with patch('netqmpi.sdk.external.QMPICommunicator') as MockComm:
+        mock_executor = MagicMock()
+        with patch('netqmpi.sdk.external.QMPICommunicator') as MockComm, \
+             patch('netqmpi.sdk.external.Environment'):
             MockComm.return_value = MagicMock()
-            wrapper_0 = _make_communicator_injector(lambda comm=None: None, rank=0, size=4)
-            wrapper_2 = _make_communicator_injector(lambda comm=None: None, rank=2, size=4)
+            wrapper_0 = _make_environment_injector(lambda env=None: None, rank=0, size=4, executor=mock_executor)
+            wrapper_2 = _make_environment_injector(lambda env=None: None, rank=2, size=4, executor=mock_executor)
 
             wrapper_0(app_config=None)
             wrapper_2(app_config=None)
@@ -181,14 +188,16 @@ class TestCommunicatorInjector:
     def test_entry_points_are_wrapped(self):
         from netqmpi.sdk.external import app_instance_from_file
         import tempfile, os
-        from unittest.mock import patch
+        from unittest.mock import patch, MagicMock
 
         f = tempfile.NamedTemporaryFile(suffix=".py", mode='w', delete=False)
-        f.write("def main(comm=None): pass\n")
+        f.write("def main(env=None): pass\n")
         f.flush()
         f.close()
         try:
-            with patch('netqmpi.sdk.external.env.load_roles_config', return_value=None):
+            with patch('netqmpi.sdk.external.env.load_roles_config', return_value=None), \
+                 patch('netqmpi.sdk.external.NetQASMExecutorAdapter') as MockExec:
+                MockExec.return_value = MagicMock()
                 app_instance = app_instance_from_file(f.name, num_processes=2)
                 # The entry is the wrapper, not the original main
                 for prog in app_instance.app.programs:

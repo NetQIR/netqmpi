@@ -1,17 +1,33 @@
-import importlib
+"""
+Backend-agnostic utilities for loading user scripts at runtime.
+
+This module intentionally contains no backend-specific imports.  All
+backend-specific wiring (environment injection, ApplicationInstance
+creation, etc.) lives in the adapter packages
+(``netqmpi.sdk.adapters.*``).
+"""
+import importlib.util
 import os.path
 import sys
-import importlib.util
-from typing import Optional
-
-from netqasm.runtime import env
-from netqasm.runtime.application import ApplicationInstance, Program, Application
-from netqasm.util.yaml import load_yaml
-
-from netqmpi.sdk.communicator.communicator import QMPICommunicator
 
 
-def import_module_from_path(path):
+def import_module_from_path(path: str):
+    """
+    Dynamically import a Python file as a module.
+
+    The module is registered in ``sys.modules`` under its filename stem so
+    that subsequent imports of the same path return the cached module.
+
+    Args:
+        path: Absolute or relative path to the ``.py`` file.
+
+    Returns:
+        The loaded module object.
+
+    Raises:
+        ImportError:  If the module spec cannot be created from *path*.
+        FileNotFoundError: If *path* does not exist.
+    """
     module_name = os.path.splitext(os.path.basename(path))[0]
 
     spec = importlib.util.spec_from_file_location(module_name, path)
@@ -22,80 +38,3 @@ def import_module_from_path(path):
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
     return module
-
-def _make_communicator_injector(main_func, rank: int, size: int):
-    """Wrap *main_func* so that NetQMPI injects a QMPICommunicator as 'comm'.
-
-    The returned wrapper accepts the ``app_config`` injected by NetQASM and
-    uses it together with the captured *rank* and *size* to construct a
-    :class:`QMPICommunicator` before forwarding it to the original *main_func*
-    as the ``comm`` keyword argument.
-    """
-    def wrapper(app_config=None):
-        comm = QMPICommunicator(rank, size, app_config)
-        return main_func(comm=comm)
-    return wrapper
-
-
-def app_instance_from_file(file: str = None, num_processes: int = 2,
-                           argv_file: str = None,
-                           roles_cfg_file: str = 'roles.yaml') -> ApplicationInstance:
-    """
-
-    Create an Application Instance from a single file repeated num_processes times.
-    :param roles_cfg_file: path to the roles configuration file.
-    :param argv_file: file with the arguments values for the application.
-    :param num_processes: number of processes to create.
-    :param file: the NetQASM file to load.
-    :return: ApplicationInstance
-    """
-
-    if file is None:
-        raise ValueError("file must be provided")
-    if not file.endswith(".py"):
-        raise ValueError("file must be a .py file")
-
-    program_files = {}
-
-    for i in range(num_processes):
-        program_files[f"rank_{i}"] = file
-
-    programs = []
-    argv_per_rank = {}  # Normally the values is the same for all ranks and, by default, append the rank and the size
-
-    argv = {}
-    if argv_file is not None:
-        argv = load_yaml(argv_file)
-
-    for rank, program_file in program_files.items():
-        current_argv = argv.copy()
-
-        prog_module = import_module_from_path(program_file)
-
-        main_func = getattr(prog_module, "main")
-        if main_func is None:
-            raise ValueError(f"main function not found in {program_file}")
-
-        rank_int = int(rank.split("_")[-1])
-        wrapped_main = _make_communicator_injector(main_func, rank_int, num_processes)
-        prog = Program(party=rank, entry=wrapped_main, args=[], results=[])
-        programs += [prog]
-        argv_per_rank[rank] = current_argv
-
-    roles = env.load_roles_config(roles_cfg_file)
-    roles = (
-        {prog.party: prog.party for prog in programs}
-        if roles is None
-        else roles
-    )
-
-    app = Application(programs = programs, metadata = None)
-    app_instance = ApplicationInstance(
-        app = app,
-        program_inputs=argv_per_rank,
-        network=None,
-        party_alloc=roles,
-        logging_cfg=None
-    )
-
-    return app_instance

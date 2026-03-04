@@ -1,58 +1,77 @@
 import argparse
 import pytest
 
-from netqmpi.runtime.cli import NetQASMConfig
 
-
-class TestNetQASMConfigDefaults:
-    """Verify that NetQASMConfig has sensible default values."""
+class TestRunConfigDefaults:
+    """Verify that RunConfig has sensible default values."""
 
     def test_network_config_defaults_to_none(self):
-        cfg = NetQASMConfig()
+        from netqmpi.runtime.run_config import RunConfig
+        cfg = RunConfig()
         assert cfg.network_config is None
 
     def test_post_function_defaults_to_none(self):
-        cfg = NetQASMConfig()
+        from netqmpi.runtime.run_config import RunConfig
+        cfg = RunConfig()
         assert cfg.post_function is None
 
-    def test_formalism_defaults_to_ket(self):
-        from netqasm.runtime.settings import Formalism
-        cfg = NetQASMConfig()
-        assert cfg.formalism == Formalism.KET
-
     def test_num_rounds_defaults_to_one(self):
-        cfg = NetQASMConfig()
+        from netqmpi.runtime.run_config import RunConfig
+        cfg = RunConfig()
         assert cfg.num_rounds == 1
 
     def test_log_cfg_defaults_to_none(self):
-        cfg = NetQASMConfig()
+        from netqmpi.runtime.run_config import RunConfig
+        cfg = RunConfig()
         assert cfg.log_cfg is None
 
     def test_use_app_config_defaults_to_true(self):
-        cfg = NetQASMConfig()
+        from netqmpi.runtime.run_config import RunConfig
+        cfg = RunConfig()
         assert cfg.use_app_config is True
 
     def test_enable_logging_defaults_to_true(self):
-        cfg = NetQASMConfig()
+        from netqmpi.runtime.run_config import RunConfig
+        cfg = RunConfig()
         assert cfg.enable_logging is True
 
     def test_hardware_defaults_to_generic(self):
-        cfg = NetQASMConfig()
+        from netqmpi.runtime.run_config import RunConfig
+        cfg = RunConfig()
         assert cfg.hardware == "generic"
 
 
-class TestNetQASMConfigCustomValues:
+class TestNetQASMRunConfigDefaults:
+    """Verify that NetQASMRunConfig inherits RunConfig and adds NetQASM fields."""
+
+    def test_formalism_defaults_to_ket(self):
+        from netqasm.runtime.settings import Formalism
+        from netqmpi.sdk.adapters.netqasm.netqasm_executor import NetQASMRunConfig
+        cfg = NetQASMRunConfig()
+        assert cfg.formalism == Formalism.KET
+
+    def test_inherits_run_config_defaults(self):
+        from netqmpi.sdk.adapters.netqasm.netqasm_executor import NetQASMRunConfig
+        cfg = NetQASMRunConfig()
+        assert cfg.num_rounds == 1
+        assert cfg.enable_logging is True
+        assert cfg.hardware == "generic"
+
+
+class TestRunConfigCustomValues:
     """Verify custom values are stored properly."""
 
     def test_custom_network_config(self):
         from unittest.mock import MagicMock
+        from netqmpi.runtime.run_config import RunConfig
         nc = MagicMock()
-        cfg = NetQASMConfig(network_config=nc)
+        cfg = RunConfig(network_config=nc)
         assert cfg.network_config is nc
 
     def test_custom_post_function(self):
+        from netqmpi.runtime.run_config import RunConfig
         fn = lambda: None
-        cfg = NetQASMConfig(post_function=fn)
+        cfg = RunConfig(post_function=fn)
         assert cfg.post_function is fn
 
 

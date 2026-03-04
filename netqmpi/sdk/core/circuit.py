@@ -121,6 +121,9 @@ class Circuit(ABC):
             A backend-specific object (gate call, instruction, …).
         """
 
+        # TODO: meter aquí el OperationContainer
+        pass
+
     @abstractmethod
     def build(self) -> Any:
         """

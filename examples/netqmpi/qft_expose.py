@@ -1,6 +1,7 @@
-from netqmpi.sdk.communicator.communicator import QMPICommunicator
+from netqmpi.sdk.core.environment import Environment
 
-def main(comm : QMPICommunicator = None):
+def main(env: Environment = None):
+    comm = env.comm
     rank = comm.get_rank()
     ROOT_RANK = 0
 
