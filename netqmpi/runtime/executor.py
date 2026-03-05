@@ -15,9 +15,13 @@ allowed here; those live exclusively in the adapter packages.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from netqmpi.runtime.run_config import RunConfig
+from netqmpi.sdk.core.circuit import Circuit
+
+if TYPE_CHECKING:
+    from netqmpi.sdk.core.environment import Environment
 
 
 class Executor(ABC):
@@ -76,13 +80,20 @@ class Executor(ABC):
         """
 
     @abstractmethod
-    def create_circuit(self, num_qubits: int, num_clbits: int):
+    def create_circuit(
+        self,
+        num_qubits: int,
+        num_clbits: int,
+        environment: Optional[Environment] = None,
+    ) -> Circuit:
         """
         Factory Method: creates a backend-specific quantum circuit.
 
         Args:
-            num_qubits: Number of qubits in the circuit.
-            num_clbits: Number of classical bits in the circuit.
+            num_qubits:  Number of qubits in the circuit.
+            num_clbits:  Number of classical bits in the circuit.
+            environment: The :class:`~netqmpi.sdk.core.environment.Environment`
+                         to bind to the circuit.
 
         Returns:
             A backend-specific :class:`~netqmpi.sdk.core.circuit.Circuit`.

@@ -1,9 +1,7 @@
-"""
-Cunqa adapters for NetQMPI.
+"""Cunqa SDK adapters for NetQMPI.
 
-Contains the Cunqa-specific implementations of Executor and Circuit.
+Contains the Cunqa-specific :class:`Circuit` implementation.
 """
-from netqmpi.sdk.adapters.cunqa.cunqa_executor import CunqaExecutorAdapter
 from netqmpi.sdk.adapters.cunqa.cunqa_circuit import CunqaCircuitAdapter
 
-__all__ = ['CunqaExecutorAdapter', 'CunqaCircuitAdapter']
+__all__ = ['CunqaCircuitAdapter']

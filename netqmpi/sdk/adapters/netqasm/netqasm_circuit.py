@@ -1,163 +1,199 @@
 """
-Circuit adapter for the NetQASM backend.
+Circuit adapter for the NetQASM backend — eager execution model.
 
-Implements the Circuit interface to work with NetQASM circuits.
+NetQASM has no circuit object: every instruction is dispatched to the
+simulator the moment it is called on a :class:`netqasm.sdk.qubit.Qubit`.
+Therefore this adapter:
+
+1. Allocates a :class:`Qubit` array in ``__init__`` using the live
+   ``connection`` obtained via ``environment.comm.connection``.
+2. Overrides every gate method of the base :class:`Circuit` so that each
+   one *first* delegates to ``super()`` (recording the operation in the
+   :class:`OperationContainer`) and *then* executes the corresponding
+   NetQASM SDK call on the qubit immediately.
+3. Keeps ``translate()`` as a no-op — execution has already happened.
+4. In ``build()`` flushes the connection and returns the qubit array
+   together with the classical results.
 """
-from typing import List, Any
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, List, Optional
+
+from netqasm.sdk.qubit import Qubit
 
 from netqmpi.sdk.core.circuit import Circuit
-from netqmpi.sdk.core.operations import (
-    Operation,
-    Gate, ControlledGate, ClassicalControlledGate,
-    Measure, Reset, Barrier,
-    OperationContainer,
-    QSend, QRecv, QScatter, QGather, Expose, Unexpose,
-)
+from netqmpi.sdk.core.operations.operation import Operation
+
+if TYPE_CHECKING:
+    from netqmpi.sdk.core.environment import Environment
 
 
 class NetQASMCircuitAdapter(Circuit):
     """
-    Adapter that implements Circuit for the NetQASM backend.
-    
-    This adapter encapsulates a NetQASM circuit and provides
-    the common interface defined in the abstract Circuit class.
+    Eager-execution circuit adapter for NetQASM.
+
+    ``environment`` must be an
+    :class:`~netqmpi.sdk.core.environment.Environment` whose ``comm``
+    exposes a ``connection`` of type
+    :class:`netqasm.sdk.external.NetQASMConnection`.
+
+    Attributes:
+        _qubits  (List[Qubit]): Live NetQASM qubits allocated at construction.
+        _results (List[Any]):   Classical measurement results indexed by cbit.
     """
-    
-    def __init__(self, num_qubits: int, num_clbits: int):
+
+    def __init__(
+        self,
+        num_qubits: int,
+        num_clbits: int,
+        environment: Optional[Environment] = None,
+    ) -> None:
         """
-        Initialize the NetQASM circuit.
-        
         Args:
-            num_qubits: Number of qubits in the circuit.
-            num_clbits: Number of classical bits in the circuit.
+            num_qubits:  Number of qubits to allocate.
+            num_clbits:  Number of classical result slots.
+            environment: The owning
+                         :class:`~netqmpi.sdk.core.environment.Environment`.
+                         Its ``comm.connection`` is used to allocate
+                         :class:`Qubit` instances immediately.
         """
-        super().__init__(num_qubits, num_clbits)
-        # TODO: Initialize the underlying NetQASM circuit
-        self._netqasm_circuit = None  # This would be the actual NetQASM object
-    
+        super().__init__(num_qubits, num_clbits, environment)
+
+        if environment is not None:
+            connection = environment.comm.connection
+            self._qubits: List[Qubit] = [
+                Qubit(connection) for _ in range(num_qubits)
+            ]
+        else:
+            self._qubits: List[Qubit] = []
+        self._results: List[Any] = [None] * num_clbits
+
+    # ------------------------------------------------------------------
+    # Circuit abstract interface
+    # ------------------------------------------------------------------
+
     def operations_supported(self) -> List[str]:
-        """
-        Returns the operations supported by this NetQASM circuit.
-        
-        Returns:
-            List of available quantum operations.
-        """
-        # TODO: Implement actual NetQASM operations list
         return [
             'H', 'X', 'Y', 'Z', 'S', 'T', 'K',
             'CNOT', 'CZ', 'CPHASE',
             'RX', 'RY', 'RZ',
-            'measure', 'reset'
+            'measure', 'reset',
         ]
 
-    def _translate_gate(self, op: Gate):
-        """Translate a single unitary gate (H, X, RZ, …) into a NetQASM instruction."""
-        raise NotImplementedError(f"Gate '{op.name}' is not yet implemented for the NetQASM backend.")
-
-    def _translate_controlled_gate(self, op: ControlledGate):
-        """Translate a qubit-controlled gate (e.g. CNOT, CZ) into NetQASM instructions."""
-        raise NotImplementedError("ControlledGate is not yet implemented for the NetQASM backend.")
-
-    def _translate_classical_controlled_gate(self, op: ClassicalControlledGate):
-        """Translate a classically-controlled gate (conditioned on cbit values) into NetQASM instructions."""
-        raise NotImplementedError("ClassicalControlledGate is not yet implemented for the NetQASM backend.")
-
-    def _translate_measure(self, op: Measure):
-        """Translate a measurement into a NetQASM measure instruction."""
-        raise NotImplementedError("Measure is not yet implemented for the NetQASM backend.")
-
-    def _translate_reset(self, op: Reset):
-        """Translate a qubit reset into a NetQASM init instruction."""
-        raise NotImplementedError("Reset is not yet implemented for the NetQASM backend.")
-
-    def _translate_barrier(self, op: Barrier):
-        """Translate a barrier (no-op for NetQASM; used to prevent re-ordering)."""
-        raise NotImplementedError("Barrier is not yet implemented for the NetQASM backend.")
-
-    def _translate_operation_container(self, op: OperationContainer):
-        """Recursively translate a composite OperationContainer by flattening its children."""
-        raise NotImplementedError("OperationContainer translation is not yet implemented for the NetQASM backend.")
-
-    def _translate_qsend(self, op: QSend):
-        """Translate a QSend into the NetQASM teleportation-based send protocol."""
-        raise NotImplementedError("QSend is not yet implemented for the NetQASM backend.")
-
-    def _translate_qrecv(self, op: QRecv):
-        """Translate a QRecv into the NetQASM teleportation-based receive protocol."""
-        raise NotImplementedError("QRecv is not yet implemented for the NetQASM backend.")
-
-    def _translate_qscatter(self, op: QScatter):
-        """Translate a QScatter into individual NetQASM send operations from the sender rank."""
-        raise NotImplementedError("QScatter is not yet implemented for the NetQASM backend.")
-
-    def _translate_qgather(self, op: QGather):
-        """Translate a QGather into individual NetQASM receive operations at the receiver rank."""
-        raise NotImplementedError("QGather is not yet implemented for the NetQASM backend.")
-
-    def _translate_expose(self, op: Expose):
-        """Translate an Expose into a NetQASM GHZ-based telegate exposure."""
-        raise NotImplementedError("Expose is not yet implemented for the NetQASM backend.")
-
-    def _translate_unexpose(self, op: Unexpose):
-        """Translate an Unexpose into the NetQASM GHZ measurement and classical corrections."""
-        raise NotImplementedError("Unexpose is not yet implemented for the NetQASM backend.")
-
-    # Dispatch table: maps each Operation type to its translation method.
-    # ClassicalControlledGate and ControlledGate must appear before Gate
-    # because both are subclasses of Operation but not of Gate.
-    _DISPATCH: dict = {}
-
-    def __init_subclass__(cls, **kwargs):
-        super().__init_subclass__(**kwargs)
-        cls._DISPATCH = {}
-
-    def _build_dispatch(self):
-        return {
-            ClassicalControlledGate: self._translate_classical_controlled_gate,
-            ControlledGate:          self._translate_controlled_gate,
-            Gate:                    self._translate_gate,
-            Measure:                 self._translate_measure,
-            Reset:                   self._translate_reset,
-            Barrier:                 self._translate_barrier,
-            OperationContainer:      self._translate_operation_container,
-            QSend:                   self._translate_qsend,
-            QRecv:                   self._translate_qrecv,
-            QScatter:                self._translate_qscatter,
-            QGather:                 self._translate_qgather,
-            Expose:                  self._translate_expose,
-            Unexpose:                self._translate_unexpose,
-        }
-
     def translate(self, op: Operation) -> Any:
-        """
-        Dispatches a generic Operation to the appropriate private translation method
-        via a type-keyed dispatch table.
+        """No-op: every operation is executed eagerly in the gate overrides."""
+        return None
 
-        Args:
-            op: The generic Operation to translate.
+    def build(self) -> dict:
+        """Flush the connection and return qubits + classical results."""
+        if self._environment is not None:
+            self._environment.comm.flush()
+        return {'qubits': self._qubits, 'results': self._results}
 
-        Returns:
-            The corresponding NetQASM instruction(s).
+    # ------------------------------------------------------------------
+    # Single-qubit gates
+    # ------------------------------------------------------------------
 
-        Raises:
-            TypeError: If the operation type is unknown.
-        """
-        if not self._DISPATCH:
-            self._DISPATCH = self._build_dispatch()
+    def h(self, qubit: int) -> NetQASMCircuitAdapter:
+        super().h(qubit)
+        self._qubits[qubit].H()
+        return self
 
-        handler = self._DISPATCH.get(type(op))
-        if handler is None:
-            # Walk the MRO to support subclasses not registered explicitly.
-            handler = next(
-                (self._DISPATCH[t] for t in type(op).__mro__ if t in self._DISPATCH),
-                None,
+    def x(self, qubit: int) -> NetQASMCircuitAdapter:
+        super().x(qubit)
+        self._qubits[qubit].X()
+        return self
+
+    def y(self, qubit: int) -> NetQASMCircuitAdapter:
+        super().y(qubit)
+        self._qubits[qubit].Y()
+        return self
+
+    def z(self, qubit: int) -> NetQASMCircuitAdapter:
+        super().z(qubit)
+        self._qubits[qubit].Z()
+        return self
+
+    def s(self, qubit: int) -> NetQASMCircuitAdapter:
+        super().s(qubit)
+        self._qubits[qubit].S()
+        return self
+
+    def t(self, qubit: int) -> NetQASMCircuitAdapter:
+        super().t(qubit)
+        self._qubits[qubit].T()
+        return self
+
+    def k(self, qubit: int) -> NetQASMCircuitAdapter:
+        """K gate (NetQASM-specific, not in the base Circuit API)."""
+        self._check_qubit(qubit)
+        self._qubits[qubit].K()
+        return self
+
+    # ------------------------------------------------------------------
+    # Parametric single-qubit gates
+    # ------------------------------------------------------------------
+
+    def rx(self, theta: float, qubit: int) -> NetQASMCircuitAdapter:
+        super().rx(theta, qubit)
+        # NetQASM discrete rotation: angle = n / 2^d * pi
+        self._qubits[qubit].rot_X(n=round(theta), d=16)
+        return self
+
+    def ry(self, theta: float, qubit: int) -> NetQASMCircuitAdapter:
+        super().ry(theta, qubit)
+        self._qubits[qubit].rot_Y(n=round(theta), d=16)
+        return self
+
+    def rz(self, theta: float, qubit: int) -> NetQASMCircuitAdapter:
+        super().rz(theta, qubit)
+        self._qubits[qubit].rot_Z(n=round(theta), d=16)
+        return self
+
+    # ------------------------------------------------------------------
+    # Two-qubit gates
+    # ------------------------------------------------------------------
+
+    def cx(self, control: int, target: int) -> NetQASMCircuitAdapter:
+        super().cx(control, target)
+        self._qubits[control].cnot(self._qubits[target])
+        return self
+
+    def cz(self, control: int, target: int) -> NetQASMCircuitAdapter:
+        super().cz(control, target)
+        self._qubits[control].cphase(self._qubits[target])
+        return self
+
+    def swap(self, qubit1: int, qubit2: int) -> NetQASMCircuitAdapter:
+        super().swap(qubit1, qubit2)
+        # Decompose SWAP into 3 CNOTs
+        q1, q2 = self._qubits[qubit1], self._qubits[qubit2]
+        q1.cnot(q2)
+        q2.cnot(q1)
+        q1.cnot(q2)
+        return self
+
+    # ------------------------------------------------------------------
+    # Non-unitary operations
+    # ------------------------------------------------------------------
+
+    def measure(self, qubit: int, cbit: int) -> NetQASMCircuitAdapter:
+        super().measure(qubit, cbit)
+        self._results[cbit] = self._qubits[qubit].measure()
+        return self
+
+    def measure_all(self) -> NetQASMCircuitAdapter:
+        """Measure every qubit, executing eagerly on NetQASM."""
+        if self._num_clbits < self._num_qubits:
+            raise ValueError(
+                "Not enough classical bits to measure all qubits "
+                f"({self._num_clbits} clbits < {self._num_qubits} qubits)."
             )
-        if handler is None:
-            raise TypeError(f"Unknown operation type: {type(op).__name__}")
-        return handler(op)
+        for i in range(self._num_qubits):
+            self.measure(i, i)
+        return self
 
-
-    def build(self) -> Any:
-        pass
-
-    # These methods will delegate to the underlying NetQASM circuit
+    def reset(self, qubit: int) -> NetQASMCircuitAdapter:
+        super().reset(qubit)
+        # NetQASM has no native reset; the intent is recorded in the container.
+        return self

@@ -46,12 +46,12 @@ class TestNetQASMRunConfigDefaults:
 
     def test_formalism_defaults_to_ket(self):
         from netqasm.runtime.settings import Formalism
-        from netqmpi.sdk.adapters.netqasm.netqasm_executor import NetQASMRunConfig
+        from netqmpi.runtime.adapters.netqasm.netqasm_executor import NetQASMRunConfig
         cfg = NetQASMRunConfig()
         assert cfg.formalism == Formalism.KET
 
     def test_inherits_run_config_defaults(self):
-        from netqmpi.sdk.adapters.netqasm.netqasm_executor import NetQASMRunConfig
+        from netqmpi.runtime.adapters.netqasm.netqasm_executor import NetQASMRunConfig
         cfg = NetQASMRunConfig()
         assert cfg.num_rounds == 1
         assert cfg.enable_logging is True

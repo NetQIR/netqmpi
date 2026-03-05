@@ -32,8 +32,9 @@ from netqmpi.runtime.executor import Executor
 from netqmpi.runtime.run_config import RunConfig
 from netqmpi.sdk.adapters.netqasm.netqasm_circuit import NetQASMCircuitAdapter
 from netqmpi.sdk.communicator.communicator import QMPICommunicator
+from netqmpi.sdk.core.circuit import Circuit
 from netqmpi.sdk.core.environment import Environment
-from netqmpi.sdk.external import import_module_from_path
+from netqmpi.runtime.external import import_module_from_path
 
 
 # ---------------------------------------------------------------------------
@@ -114,18 +115,25 @@ class NetQASMExecutorAdapter(Executor):
             'measure', 'reset',
         ]
 
-    def create_circuit(self, num_qubits: int, num_clbits: int) -> NetQASMCircuitAdapter:
+    def create_circuit(
+        self,
+        num_qubits: int,
+        num_clbits: int,
+        environment: Optional[Environment] = None,
+    ) -> Circuit:
         """
         Factory Method: creates a :class:`~netqmpi.sdk.adapters.netqasm.NetQASMCircuitAdapter`.
 
         Args:
-            num_qubits: Number of qubits in the circuit.
-            num_clbits: Number of classical bits in the circuit.
+            num_qubits:  Number of qubits in the circuit.
+            num_clbits:  Number of classical bits in the circuit.
+            environment: The :class:`~netqmpi.sdk.core.environment.Environment`
+                         to bind to the circuit.
 
         Returns:
             :class:`~netqmpi.sdk.adapters.netqasm.NetQASMCircuitAdapter` instance.
         """
-        return NetQASMCircuitAdapter(num_qubits, num_clbits)
+        return NetQASMCircuitAdapter(num_qubits, num_clbits, environment=environment)
 
     # ------------------------------------------------------------------
     # Executor interface — application builder

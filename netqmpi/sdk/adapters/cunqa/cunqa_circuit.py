@@ -3,9 +3,14 @@ Circuit adapter for the Cunqa backend.
 
 Implements the Circuit interface to work with Cunqa circuits.
 """
-from typing import List
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, List, Optional
 
 from netqmpi.sdk.core.circuit import Circuit
+
+if TYPE_CHECKING:
+    from netqmpi.sdk.core.environment import Environment
 
 
 class CunqaCircuitAdapter(Circuit):
@@ -16,15 +21,22 @@ class CunqaCircuitAdapter(Circuit):
     the common interface defined in the abstract Circuit class.
     """
     
-    def __init__(self, num_qubits: int, num_clbits: int):
+    def __init__(
+        self,
+        num_qubits: int,
+        num_clbits: int,
+        environment: Optional[Environment] = None,
+    ):
         """
         Initialize the Cunqa circuit.
         
         Args:
-            num_qubits: Number of qubits in the circuit.
-            num_clbits: Number of classical bits in the circuit.
+            num_qubits:  Number of qubits in the circuit.
+            num_clbits:  Number of classical bits in the circuit.
+            environment: The :class:`~netqmpi.sdk.core.environment.Environment`
+                         bound to this circuit.
         """
-        super().__init__(num_qubits, num_clbits)
+        super().__init__(num_qubits, num_clbits, environment)
         # TODO: Initialize the underlying Cunqa circuit
         self._cunqa_circuit = None  # This would be the actual Cunqa object
     

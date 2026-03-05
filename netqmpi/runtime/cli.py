@@ -30,14 +30,14 @@ def simulate(
         script:    Path to the NetQMPI Python script.
         num_procs: Number of parallel quantum nodes.
         executor:  Backend executor.  Defaults to
-                   :class:`~netqmpi.sdk.adapters.netqasm.NetQASMExecutorAdapter`
+                   :class:`~netqmpi.runtime.adapters.netqasm.NetQASMExecutorAdapter`
                    when ``None``.
         config:    Simulation parameters.  Defaults to :class:`RunConfig`
                    (all default values) when ``None``.
         timer:     If ``True``, prints the wall-clock time of the run.
     """
     if executor is None:
-        from netqmpi.sdk.adapters.netqasm.netqasm_executor import NetQASMExecutorAdapter
+        from netqmpi.runtime.adapters.netqasm import NetQASMExecutorAdapter
         executor = NetQASMExecutorAdapter(size=num_procs)
 
     if config is None:
