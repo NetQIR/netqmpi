@@ -1,9 +1,5 @@
 from typing import List
 
-from netqmpi.sdk.core.circuit import Circuit
-from netqmpi.sdk.primitives.collective.collective import CollectiveCommTeledata, CollectiveCommTelegate
-from netqmpi.sdk.primitives.p2p import P2PCommTeledata
-
 class QMPICommunicator:
     def __init__(self, rank, size, executor, app_config = None):
         self.rank = rank
@@ -42,10 +38,10 @@ class QMPICommunicator:
         return circuit.qrecv(qubits, src_rank)
 
     def qscatter(self, qubits: List[int], rank_sender: int) -> List[int]:
-        return CollectiveCommTeledata.qscatter(self, qubits, rank_sender)
+        pass
 
     def qgather(self, qubits: List[int], rank_recv: int) -> List[int]:
-        return CollectiveCommTeledata.qgather(self, qubits, rank_recv)
+        pass
 
     def expose(self, qubits: List[int], rank: int = 0):
         """
@@ -53,12 +49,11 @@ class QMPICommunicator:
         :param qubits: List of qubits to expose.
         :param rank: Exposer rank
         """
-        CollectiveCommTelegate.expose(self, qubits, rank)
+        pass
     def unexpose(self, rank: int = 0):
         """
         Unexpose qubits from the network.
         :param rank: Exposer rank
         :return: None
         """
-
-        CollectiveCommTelegate.unexpose(self, rank)
+        pass

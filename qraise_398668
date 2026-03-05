@@ -1,0 +1,14 @@
+slurmstepd: info: Setting TMPDIR to /scratch/398668. Previous errors about TMPDIR can be discarded
+srun: Job step's --cpus-per-task value exceeds that of job (4 > 2). Job step may never run.
+(03/05/26 12:38:45 PM) [Executor 398668] debug: Raising executor with Aer.  15ms
+(03/05/26 12:38:45 PM) [QPU 398668_0] debug: Raising QPU with quantum communications.  17ms
+(03/05/26 12:38:45 PM) [QPU 398668_0] debug: QPU going to turn on with AerQCSimulator.  0ms
+(03/05/26 12:38:45 PM) [QPU 398668_1] debug: Raising QPU with quantum communications.  17ms
+(03/05/26 12:38:45 PM) [QPU 398668_1] debug: QPU going to turn on with AerQCSimulator.  0ms
+(03/05/26 12:38:45 PM) [QPU 398668_0] debug: Server bound to tcp://10.5.7.5:39525  39ms
+(03/05/26 12:38:45 PM) [QPU 398668_1] debug: Server bound to tcp://10.5.7.5:46509  40ms
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+slurmstepd-c7-5: error: *** JOB 398668 ON c7-5 CANCELLED AT 2026-03-05T12:38:45 ***
+slurmstepd-c7-5: error: *** STEP 398668.0 ON c7-5 CANCELLED AT 2026-03-05T12:38:45 ***
+slurmstepd-c7-5: error: *** STEP 398668.1 ON c7-5 CANCELLED AT 2026-03-05T12:38:45 ***

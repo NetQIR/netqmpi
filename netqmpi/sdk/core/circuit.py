@@ -99,13 +99,16 @@ class Circuit(ABC):
     # ------------------------------------------------------------------
 
     @abstractmethod
-    def operations_supported(self) -> List[str]:
+    def translate(self, op: Operation) -> Any:
         """
-        Returns the list of operations supported by this circuit.
+        Translate a generic :class:`~netqmpi.sdk.core.operations.Operation`
+        into a backend-native instruction.
+
+        Args:
+            op: The operation to translate.
 
         Returns:
-            List of supported quantum operation names,
-            e.g. ``['H', 'CX', 'RZ', 'measure', 'reset']``.
+            A backend-specific object (gate call, instruction, …).
         """
 
     # ------------------------------------------------------------------

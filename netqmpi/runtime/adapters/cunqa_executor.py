@@ -12,7 +12,7 @@ from cunqa.qpu import qraise, get_QPUs, run, qdrop
 from cunqa.qjob import gather
 
 from netqmpi.runtime.executor import Executor
-from netqmpi.sdk.environment import Environment
+from netqmpi.sdk.core.environment import Environment
 from netqmpi.sdk.adapters.cunqa_circuit import CunqaCircuitAdapter
 from netqmpi.sdk.communicator import QMPICommunicator
 from netqmpi.helpers import load_main
@@ -87,7 +87,9 @@ class CunqaExecutorAdapter(Executor):
 
         try:
             qpus  = get_QPUs(co_located = True, family = family)
+            
             for circuit in self.env.circuits:
+                circuit.translate(circuit.ops)
                 print(f"ID: {circuit._cunqa_circuit.id}\n\t{circuit._cunqa_circuit.instructions}")
             qjobs = run([circuit._cunqa_circuit for circuit in self.env.circuits], qpus, shots = 1024) # non-blocking call
             results = gather(qjobs)

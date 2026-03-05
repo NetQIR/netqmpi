@@ -7,7 +7,6 @@ from netqmpi.runtime.executor import Executor
 from netqmpi.runtime.adapters.cunqa_executor import CunqaExecutorAdapter
 from netqmpi.runtime.adapters.netqasm_executor import NetQASMExecutorAdapter
 
-
 from dataclasses import dataclass
 from typing import Optional, Callable, Any
 
@@ -52,6 +51,8 @@ def simulate(
         print(f"finished simulation in {round(time.perf_counter() - start, 2)} seconds")
 
 def main():
+    
+    print("Hola!!!!!!")
     import sys
     print("ARGV:", sys.argv)
     
@@ -90,7 +91,7 @@ def main():
         print("No backend flag; using default (NetQASM)")
         executor = NetQASMExecutorAdapter(args.num_procs)    
     
-    
+    print("Hola!!!!!!")
     
     simulate(
         script=args.script,

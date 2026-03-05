@@ -12,6 +12,6 @@ def load_main(path):
         raise ValueError(f"{path} does not define a main() function")
 
     if namespace["main"] is None:
-            raise ValueError(f"main function not found in {script}")
+            raise ValueError(f"main function not found in {path}")
 
     return namespace["main"]
