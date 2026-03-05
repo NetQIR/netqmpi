@@ -12,3 +12,4 @@ dependencies:
   - pip
   - pip:
       - netqasm~=1.0.0
+      - squidasm

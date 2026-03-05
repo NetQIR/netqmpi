@@ -1,10 +1,14 @@
 """
-NetQMPI core module.
+NetQMPI SDK core module.
 
-Contains the base abstractions (Executor and Circuit) that define
-the common interface for all quantum backends.
+Contains the user-facing abstractions that define the programming
+interface for distributed quantum applications:
+
+- :class:`~netqmpi.sdk.core.environment.Environment` – runtime context
+  injected into every ``main()`` function.
+- :class:`~netqmpi.sdk.core.circuit.Circuit` – abstract quantum circuit.
 """
-from netqmpi.runtime.executor import Executor
+from netqmpi.sdk.core.environment import Environment
 from netqmpi.sdk.core.circuit import Circuit
 
-__all__ = ['Executor', 'Circuit']
+__all__ = ['Environment', 'Circuit']

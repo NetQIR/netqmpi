@@ -5,7 +5,7 @@ Defines the contract that all circuit adapters must follow.
 """
 from __future__ import annotations
 from abc import ABC, abstractmethod
-from typing import Any, Iterator, List, Optional
+from typing import TYPE_CHECKING, Any, Iterator, List, Optional
 
 from netqmpi.sdk.core.operations.qmpi import (
     Expose, QGather, QRecv, QScatter, QSend, Unexpose,
@@ -14,6 +14,9 @@ from netqmpi.sdk.core.operations.container import OperationContainer
 from netqmpi.sdk.core.operations.gate import ControlledGate, Gate
 from netqmpi.sdk.core.operations.non_unitary import Barrier, Measure, Reset
 from netqmpi.sdk.core.operations.operation import Operation
+
+if TYPE_CHECKING:
+    from netqmpi.sdk.core.environment import Environment
 
 
 class _ExposeContext:
@@ -65,14 +68,22 @@ class Circuit(ABC):
         num_clbits (int): Number of classical bits in the circuit.
     """
 
-    def __init__(self, num_qubits: int, num_clbits: int) -> None:
+    def __init__(
+        self,
+        num_qubits: int,
+        num_clbits: int,
+        environment: Optional[Environment] = None,
+    ) -> None:
         """
         Args:
-            num_qubits: Number of qubits in the circuit.
-            num_clbits: Number of classical bits in the circuit.
+            num_qubits:  Number of qubits in the circuit.
+            num_clbits:  Number of classical bits in the circuit.
+            environment: The :class:`~netqmpi.sdk.core.environment.Environment`
+                         bound to this circuit (``None`` for standalone use).
         """
         self._num_qubits = num_qubits
         self._num_clbits = num_clbits
+        self._environment = environment
         self._ops = OperationContainer()
 
     # ------------------------------------------------------------------
@@ -93,6 +104,11 @@ class Circuit(ABC):
     def ops(self) -> OperationContainer:
         """Root :class:`~netqmpi.sdk.core.operations.OperationContainer`."""
         return self._ops
+
+    @property
+    def environment(self) -> Optional[Environment]:
+        """The :class:`~netqmpi.sdk.core.environment.Environment` bound to this circuit."""
+        return self._environment
 
     # ------------------------------------------------------------------
     # Abstract interface

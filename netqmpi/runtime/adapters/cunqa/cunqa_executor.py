@@ -37,21 +37,6 @@ class CunqaExecutorAdapter(Executor):
         
         self.env = Environment(self.create_circuit)
     
-    def operations_supported(self) -> List[str]:
-        """
-        Returns the operations supported by Cunqa.
-        
-        Returns:
-            List of quantum operations available in Cunqa.
-        """
-        # TODO: Implement actual Cunqa operations list
-        return [
-            'H', 'X', 'Y', 'Z', 'S', 'T', 'Sdg', 'Tdg',
-            'CNOT', 'CZ', 'SWAP',
-            'RX', 'RY', 'RZ', 'U3',
-            'measure', 'reset', 'barrier'
-        ]
-    
     def create_circuit(self, num_qubits: int, num_clbits: int, rank: int) -> CunqaCircuitAdapter:
         """
         Factory Method: Creates a Cunqa circuit.
@@ -73,9 +58,6 @@ class CunqaExecutorAdapter(Executor):
         
         return wrapped_main
         
-    def load_network_cfg(self, app_dir: str, user_network_cfg: Optional[Any]) -> Any:
-        pass
-
     def run(self, app: Any, configuration: Any) -> None:
         for i in range(self.size):
             app(i)
@@ -99,6 +81,3 @@ class CunqaExecutorAdapter(Executor):
         except Exception as error:
             qdrop(family)
             raise error
-
-    def postprocess_logs(self, configuration: Any) -> None:
-        pass

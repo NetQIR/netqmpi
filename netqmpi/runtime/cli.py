@@ -1,60 +1,55 @@
-import argparse
-import os
-import time
-from typing import Optional, Callable
+"""
+NetQMPI command-line entry point.
 
-from netqmpi.runtime.executor import Executor
-from netqmpi.runtime.adapters.cunqa_executor import CunqaExecutorAdapter
-from netqmpi.runtime.adapters.netqasm_executor import NetQASMExecutorAdapter
+This module is intentionally free of any backend-specific imports
+(``netqasm``, ``cunqa``, ...).  All simulator logic is delegated to an
+:class:`~netqmpi.runtime.executor.Executor` implementation that lives
+in the corresponding adapter package.
+"""
 
-from dataclasses import dataclass
-from typing import Optional, Callable, Any
+import os, sys, time, argparse
+from typing import Optional
 
-@dataclass
-class SimulationConfig:
-    network_config: Optional[Any] = None
-    post_function: Optional[Callable] = None
-    num_rounds: int = 1
-    enable_logging: bool = True
-    log_cfg: Optional[Any] = None
-    hardware: str = "generic"
-    formalism: Optional[Any] = None      # el backend decide si lo usa
-    simulator_name: Optional[str] = None # o backend-specific
+from netqmpi.runtime import Executor
+from netqmpi.runtime.adapters import CunqaExecutorAdapter, NetQASMExecutorAdapter
+from netqmpi.runtime.run_config import RunConfig
 
 def simulate(
-    script: str, 
-    num_procs: int, 
-    executor: Executor, 
-    script_args,
-    configuration: SimulationConfig = SimulationConfig(),
-    timer=None
-):
-    if script_args is None:
-        script_args = []
+    script: str,
+    num_procs: int = 1,
+    executor: Optional[Executor] = None,
+    config: Optional[RunConfig] = None,
+    timer: bool = False,
+) -> None:
+    """
+    Build and run a NetQMPI script using the given backend *executor*.
 
-    app_dir = "."
-    app = executor.build_app(script, num_procs)
-    configuration.network_config = executor.load_network_cfg(app_dir, configuration.network_config)
+    Args:
+        script:    Path to the NetQMPI Python script.
+        num_procs: Number of parallel quantum nodes.
+        executor:  Backend executor.  Defaults to
+                   :class:`~netqmpi.runtime.adapters.netqasm.NetQASMExecutorAdapter`
+                   when ``None``.
+        config:    Simulation parameters.  Defaults to :class:`RunConfig`
+                   (all default values) when ``None``.
+        timer:     If ``True``, prints the wall-clock time of the run.
+    """
+    if executor is None:
+        executor = NetQASMExecutorAdapter(size=num_procs)
+
+    if config is None:
+        config = RunConfig()
 
     if timer:
         start = time.perf_counter()
 
-    results = executor.run(app=app, configuration=configuration)
-
-    for result in results:
-        print(result.counts)
-
-    if configuration.enable_logging:
-        executor.postprocess_logs(configuration)
+    app_instance = executor.build_app(script, num_processes=num_procs)
+    executor.run(app_instance, config)
 
     if timer:
         print(f"finished simulation in {round(time.perf_counter() - start, 2)} seconds")
 
 def main():
-    
-    print("Hola!!!!!!")
-    import sys
-    print("ARGV:", sys.argv)
     
     parser = argparse.ArgumentParser(description="Run a NetQMPI Python code.")
     
@@ -71,33 +66,26 @@ def main():
     backend_group.add_argument("--netqasm", action="store_true", help="Use NetQASM backend")
     backend_group.add_argument("--cunqa", action="store_true", help="Use CunQA backend")
 
-    #parser.add_argument("script_args", nargs=argparse.REMAINDER, help="Script configuration options.")
+    # TODO: Turn ON and OFF the timer
+    # TODO: Get specific configurations
 
     args = parser.parse_args()
 
-    if not os.path.isfile(args.script):
-        parser.error(f"Error: File {args.script} does not exist.", file=sys.stderr)
     if args.num_procs < 1:
         parser.error("Number of processes must be at least 1")
-    
-    print(args)
     
     if args.netqasm:
         executor = NetQASMExecutorAdapter(args.num_procs)
     elif args.cunqa:
         executor = CunqaExecutorAdapter(args.num_procs)
     else:
-        # si quieres un default cuando no se pasa ninguna
         print("No backend flag; using default (NetQASM)")
         executor = NetQASMExecutorAdapter(args.num_procs)    
-    
-    print("Hola!!!!!!")
     
     simulate(
         script=args.script,
         num_procs=args.num_procs,
-        executor=executor,
-        script_args=None,
+        executor=executor
     )
 
 if __name__ == "__main__":
