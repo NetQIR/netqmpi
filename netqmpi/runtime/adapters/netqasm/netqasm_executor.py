@@ -30,6 +30,7 @@ from netqasm.util.yaml import load_yaml
 
 from netqmpi.runtime.executor import Executor
 from netqmpi.runtime.run_config import RunConfig
+from netqmpi.runtime.adapters.netqasm.netqasm_communicator import NetQASMCommunicator
 from netqmpi.sdk.adapters.netqasm.netqasm_circuit import NetQASMCircuitAdapter
 from netqmpi.sdk.communicator.communicator import QMPICommunicator
 from netqmpi.sdk.core.circuit import Circuit
@@ -75,7 +76,8 @@ def _make_environment_injector(main_func, rank: int, size: int, executor: Execut
     forwarding to the original function.
     """
     def wrapper(app_config=None):
-        comm = QMPICommunicator(rank, size, app_config)
+        backend = NetQASMCommunicator(rank, size, app_config)
+        comm = QMPICommunicator(backend)
         environment = Environment(comm, executor)
         return main_func(env=environment)
     return wrapper

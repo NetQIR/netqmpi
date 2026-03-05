@@ -11,20 +11,27 @@ Therefore this adapter:
    one *first* delegates to ``super()`` (recording the operation in the
    :class:`OperationContainer`) and *then* executes the corresponding
    NetQASM SDK call on the qubit immediately.
-3. Keeps ``translate()`` as a no-op — execution has already happened.
-4. In ``build()`` flushes the connection and returns the qubit array
+3. Overrides the inter-rank communication primitives (``qsend``,
+   ``qrecv``, ``qscatter``, ``qgather``, ``expose``, ``unexpose``) with
+   the concrete teleportation / collective protocols from the NetQASM SDK.
+4. Keeps ``translate()`` as a no-op — execution has already happened.
+5. In ``build()`` flushes the connection and returns the qubit array
    together with the classical results.
 """
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, List, Optional
 
+import numpy as np
+from netqasm.sdk.classical_communication.message import StructuredMessage
 from netqasm.sdk.qubit import Qubit
 
-from netqmpi.sdk.core.circuit import Circuit
+from netqmpi.sdk.core.circuit import Circuit, _ExposeContext
 from netqmpi.sdk.core.operations.operation import Operation
+from netqmpi.sdk.core.operations.qmpi import Expose, Unexpose
 
 if TYPE_CHECKING:
+    from netqmpi.runtime.adapters.netqasm.netqasm_communicator import NetQASMCommunicator
     from netqmpi.sdk.core.environment import Environment
 
 
@@ -67,6 +74,27 @@ class NetQASMCircuitAdapter(Circuit):
         else:
             self._qubits: List[Qubit] = []
         self._results: List[Any] = [None] * num_clbits
+
+    # ------------------------------------------------------------------
+    # Private helpers – safe accessors for the environment objects
+    # ------------------------------------------------------------------
+
+    @property
+    def _comm(self):
+        """Return ``self._environment.comm`` — assumes environment is set."""
+        assert self._environment is not None, (
+            "NetQASMCircuitAdapter requires an Environment for communication ops."
+        )
+        return self._environment.comm
+
+    @property
+    def _backend(self) -> NetQASMCommunicator:
+        """Return the underlying :class:`NetQASMCommunicator` backend."""
+        # noinspection PyProtectedMember
+        from netqmpi.runtime.adapters.netqasm.netqasm_communicator import NetQASMCommunicator as _Comm
+        backend = self._comm._backend
+        assert isinstance(backend, _Comm)
+        return backend
 
     # ------------------------------------------------------------------
     # Circuit abstract interface
@@ -197,3 +225,215 @@ class NetQASMCircuitAdapter(Circuit):
         super().reset(qubit)
         # NetQASM has no native reset; the intent is recorded in the container.
         return self
+
+    # ------------------------------------------------------------------
+    # Inter-rank communication — P2P (teleportation protocol)
+    # ------------------------------------------------------------------
+
+    def qsend(self, qubits: List[int], dest_rank: int) -> NetQASMCircuitAdapter:
+        """Send *qubits* to *dest_rank* using teleportation."""
+        super().qsend(qubits, dest_rank)
+
+        comm = self._comm
+        epr_socket = comm.get_epr_socket(comm.rank, dest_rank)
+        socket = comm.get_socket(comm.rank, dest_rank)
+
+        for q_idx in qubits:
+            qubit = self._qubits[q_idx]
+            # Create EPR pair
+            epr = epr_socket.create_keep()[0]
+            # Teleport
+            qubit.cnot(epr)
+            qubit.H()
+            m1 = qubit.measure()
+            m2 = epr.measure()
+            socket.send_structured(StructuredMessage("Corrections", (m1, m2)))  # type: ignore[arg-type]
+
+            comm.flush()
+
+        return self
+
+    def qrecv(self, qubits: List[int], src_rank: int) -> NetQASMCircuitAdapter:
+        """Receive qubits from *src_rank* into local slots via teleportation."""
+        super().qrecv(qubits, src_rank)
+
+        comm = self._comm
+        epr_socket = comm.get_epr_socket(comm.rank, src_rank)
+        socket = comm.get_socket(comm.rank, src_rank)
+
+        for q_idx in qubits:
+            epr = epr_socket.recv_keep()[0]
+            comm.flush()
+
+            # Receive corrections
+            m1, m2 = socket.recv_structured().payload
+            if m2 == 1:
+                epr.X()
+            if m1 == 1:
+                epr.Z()
+            comm.flush()
+
+            # SWAP the corrected EPR qubit into the local slot
+            new_q = Qubit(comm.connection)
+            epr.cnot(new_q)
+            new_q.cnot(epr)
+            epr.cnot(new_q)
+
+            self._qubits[q_idx] = new_q
+
+            comm.flush()
+
+        return self
+
+    # ------------------------------------------------------------------
+    # Inter-rank communication — collective operations
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _list_split(lst: list, n: int) -> List[list]:
+        """Split *lst* into *n* chunks as evenly as possible."""
+        avg = len(lst) // n
+        rem = len(lst) % n
+        chunks: List[list] = []
+        start = 0
+        for i in range(n):
+            end = start + avg + (1 if i < rem else 0)
+            chunks.append(lst[start:end])
+            start = end
+        return chunks
+
+    def qscatter(self, qubits: List[int], sender_rank: int) -> NetQASMCircuitAdapter:
+        """Scatter *qubits* from *sender_rank* to all ranks."""
+        super().qscatter(qubits, sender_rank)
+
+        comm = self._comm
+        rank = comm.rank
+        size = comm.size
+
+        if rank == sender_rank:
+            chunks = self._list_split(qubits, size)
+            for i in range(size):
+                if i != sender_rank:
+                    self.qsend(chunks[i], i)
+        else:
+            self.qrecv(qubits, sender_rank)
+
+        return self
+
+    def qgather(self, qubits: List[int], recv_rank: int) -> NetQASMCircuitAdapter:
+        """Gather each rank's *qubits* into *recv_rank*."""
+        super().qgather(qubits, recv_rank)
+
+        comm = self._comm
+        rank = comm.rank
+        size = comm.size
+
+        if rank == recv_rank:
+            for i in range(size):
+                if i != recv_rank:
+                    self.qrecv(qubits, i)
+        else:
+            self.qsend(qubits, recv_rank)
+
+        return self
+
+    # ------------------------------------------------------------------
+    # Inter-rank communication — expose / unexpose (telegate protocol)
+    # ------------------------------------------------------------------
+
+    def expose(self, qubits: List[int], rank: int = 0) -> _NetQASMExposeContext:
+        """
+        Expose *qubits* via a GHZ-based telegate protocol.
+
+        Returns a context manager; the matching ``unexpose`` runs
+        automatically when the ``with`` block exits.
+        """
+        for q in qubits:
+            self._check_qubit(q)
+        return _NetQASMExposeContext(self, qubits, rank)
+
+    def _do_expose(self, qubits: List[int], rank: int) -> None:
+        """Execute the expose protocol eagerly (called by the context manager)."""
+        # Record the operation in the container
+        self._ops.add(Expose(qubits, rank))
+
+        comm = self._comm
+        backend = self._backend
+        backend.qubits_exposed = [self._qubits[q] for q in qubits]
+
+        # Create GHZ across all ranks
+        backend.ghz_qubit = comm.create_ghz()
+
+        if rank == comm.rank:
+            # Exposer: CNOT exposed qubit with GHZ, measure GHZ, broadcast
+            backend.qubits_exposed[0].cnot(backend.ghz_qubit)  # type: ignore[union-attr]
+            measure = backend.ghz_qubit.measure()  # type: ignore[union-attr]
+
+            for rnk in range(comm.size):
+                if rnk != comm.rank:
+                    socket = comm.get_socket(comm.rank, rnk)
+                    socket.send_structured(StructuredMessage("Expose", (measure,)))  # type: ignore[arg-type]
+                    comm.flush()
+        else:
+            # Non-exposer: receive correction, conditionally apply X
+            measure = comm.get_socket(comm.rank, rank).recv_structured().payload[0]
+            bit = int(measure)
+            if bit:
+                backend.ghz_qubit.X()  # type: ignore[union-attr]
+            # Make the GHZ qubit accessible as the first "exposed" qubit
+            self._qubits[qubits[0]] = backend.ghz_qubit  # type: ignore[assignment]
+
+    def _do_unexpose(self, rank: int) -> None:
+        """Execute the unexpose protocol eagerly (called by the context manager)."""
+        self._ops.add(Unexpose(rank))
+
+        comm = self._comm
+        backend = self._backend
+
+        backend.qubits_exposed.clear()
+
+        if rank == comm.rank:
+            bits: List[int] = []
+            for other_rank in range(comm.size):
+                if other_rank != comm.rank:
+                    socket = comm.get_socket(comm.rank, other_rank)
+                    bits.append(int(socket.recv_structured().payload[0]))
+                    comm.flush()
+            # Compute AND of all bits — apply Z correction if all are 1
+            if np.bitwise_and.reduce(bits):
+                backend.ghz_qubit.Z()  # type: ignore[union-attr]
+        else:
+            # Non-exposer: H on GHZ, measure, send to exposer
+            backend.ghz_qubit.H()  # type: ignore[union-attr]
+            measure = backend.ghz_qubit.measure()  # type: ignore[union-attr]
+            comm.flush()
+            socket = comm.get_socket(comm.rank, rank)
+            socket.send_structured(StructuredMessage("Unexpose", (measure,)))  # type: ignore[arg-type]
+
+        comm.flush()
+
+
+# ---------------------------------------------------------------------------
+# Expose context manager for NetQASM eager execution
+# ---------------------------------------------------------------------------
+
+class _NetQASMExposeContext(_ExposeContext):
+    """Context manager that runs the NetQASM expose/unexpose protocol eagerly.
+
+    Inherits from :class:`_ExposeContext` so the return type is compatible
+    with the base :meth:`Circuit.expose` signature.
+    """
+
+    def __init__(self, circuit: NetQASMCircuitAdapter, qubits: List[int], rank: int) -> None:
+        # Skip _ExposeContext.__init__ — we override __enter__/__exit__ entirely
+        self._circuit = circuit
+        self._qubits = qubits
+        self._rank = rank
+
+    def __enter__(self) -> NetQASMCircuitAdapter:
+        self._circuit._do_expose(self._qubits, self._rank)
+        return self._circuit
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+        self._circuit._do_unexpose(self._rank)
+        return False

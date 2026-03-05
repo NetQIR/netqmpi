@@ -14,17 +14,21 @@ def main(env: Environment = None):
 
     with comm:
         if rank == 0:
-            # Create a qubit |+> to teleport
-            q = comm.create_qubit()
-            q.H()
+            circuit = env.create_circuit(num_qubits=1, num_clbits=0)
+            circuit.h(0)
             print_info(f"start to teleport a qubit to rank_{next_rank}", rank)
-
-            comm.qsend([q], next_rank)
+            circuit.qsend([0], next_rank)
         else:
-            [qubit_recv] = comm.qrecv(previous_rank)
-            measurement = qubit_recv.measure()
-            comm.flush()
-            print_info(f"measure: {measurement}", rank)
+            circuit = env.create_circuit(num_qubits=1, num_clbits=1)
+            circuit.qrecv([0], previous_rank)
+            circuit.measure(0, 0)
 
+        result = circuit.build()
+
+        if rank != 0:
+            print_info(f"measure: {result['results'][0]}", rank)
+        else:
+            print_info("teleportation complete", rank)
+            
 if __name__ == "__main__":
     main()
