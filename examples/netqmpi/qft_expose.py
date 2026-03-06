@@ -1,6 +1,6 @@
 from netqmpi.sdk.core.environment import Environment
 
-def main(env: Environment = None):
+def main(env: Environment = None): # type: ignore
     comm = env.comm
     rank = comm.get_rank()
     ROOT_RANK = 0

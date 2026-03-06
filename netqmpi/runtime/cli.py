@@ -43,8 +43,7 @@ def simulate(
     if config is None:
         config = RunConfig()
 
-    if timer:
-        start = time.perf_counter()
+    start = time.perf_counter() if timer else 0.0
 
     app_instance = executor.build_app(script, num_processes=num_procs)
     executor.run(app_instance, config)

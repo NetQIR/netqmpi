@@ -6,7 +6,7 @@ def print_info(message, rank):
     """
     print(f"rank_{rank}: {message}")
 
-def main(env: Environment = None):
+def main(env: Environment = None): # type: ignore
     comm = env.comm
     rank = comm.get_rank()
     size = comm.get_size()

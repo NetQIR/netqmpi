@@ -96,7 +96,7 @@ class NetQASMExecutorAdapter(Executor):
     execution in a single cohesive adapter.
     """
 
-    def __init__(self, size: int, config: Dict[str, Any] = None) -> None:
+    def __init__(self, size: int, config: Optional[Dict[str, Any]] = None) -> None:
         """
         Args:
             size:   Number of available NetQASM nodes.
