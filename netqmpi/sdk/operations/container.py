@@ -4,7 +4,7 @@ Composite container for quantum operations.
 from __future__ import annotations
 from typing import Iterator, List, Union
 
-from netqmpi.sdk.core.operations.operation import Operation
+from netqmpi.sdk.operations.operation import Operation
 
 
 class OperationContainer(Operation):
@@ -12,12 +12,12 @@ class OperationContainer(Operation):
     Composite container for quantum operations.
 
     Implements the Composite pattern: it can hold both leaf
-    :class:`~netqmpi.sdk.core.operations.Operation` instances and nested
+    :class:`~netqmpi.sdk.operations.Operation` instances and nested
     :class:`OperationContainer` objects, allowing circuits to be built
     hierarchically.
 
     :meth:`flatten` produces a depth-first iterator over every leaf
-    :class:`~netqmpi.sdk.core.operations.Operation` in insertion order.
+    :class:`~netqmpi.sdk.operations.Operation` in insertion order.
 
     Example::
 
@@ -56,7 +56,7 @@ class OperationContainer(Operation):
 
     def add(self, operation: Operation) -> OperationContainer:
         """
-        Append a single leaf :class:`~netqmpi.sdk.core.operations.Operation`.
+        Append a single leaf :class:`~netqmpi.sdk.operations.Operation`.
 
         Args:
             operation: The operation to add.
@@ -66,7 +66,7 @@ class OperationContainer(Operation):
 
         Raises:
             TypeError: If *operation* is not an
-                :class:`~netqmpi.sdk.core.operations.Operation` instance.
+                :class:`~netqmpi.sdk.operations.Operation` instance.
         """
         if not isinstance(operation, Operation):
             raise TypeError(
@@ -84,7 +84,7 @@ class OperationContainer(Operation):
         Depth-first iterator over all leaf operations.
 
         Yields:
-            Each :class:`~netqmpi.sdk.core.operations.Operation` in the
+            Each :class:`~netqmpi.sdk.operations.Operation` in the
             order they were added, recursing into nested containers.
         """
         for child in self._children:

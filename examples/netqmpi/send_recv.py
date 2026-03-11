@@ -1,4 +1,4 @@
-from netqmpi.sdk.core.environment import Environment
+from netqmpi.sdk.environment import Environment
 
 def print_info(message, rank):
     """
@@ -8,7 +8,8 @@ def print_info(message, rank):
 
 def main(env: Environment = None):
     comm = env.comm
-    rank = comm.get_rank()
+    rank = comm.rank
+    
     next_rank = comm.get_next_rank(rank)
     previous_rank = comm.get_prev_rank(rank)
 
@@ -25,10 +26,10 @@ def main(env: Environment = None):
 
         result = circuit.build()
 
-        if rank != 0:
-            print_info(f"measure: {result['results'][0]}", rank)
-        else:
-            print_info("teleportation complete", rank)
+    if rank != 0:
+        print_info(f"measure: {result['results'][0]}", rank)
+    else:
+        print_info("teleportation complete", rank)
             
 if __name__ == "__main__":
     main()

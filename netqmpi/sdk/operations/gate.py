@@ -4,7 +4,7 @@ Unitary gate operations (Command pattern).
 from __future__ import annotations
 from typing import List, Optional
 
-from netqmpi.sdk.core.operations.operation import Operation
+from netqmpi.sdk.operations.operation import Operation
 
 
 class Gate(Operation):

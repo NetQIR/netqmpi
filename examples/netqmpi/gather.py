@@ -1,4 +1,4 @@
-from netqmpi.sdk.core.environment import Environment
+from netqmpi.sdk.environment import Environment
 
 def print_info(message, rank):
     """

@@ -5,14 +5,14 @@ Each class encodes the *intent* of a distributed quantum operation.
 The concrete backend adapter is responsible for implementing the
 protocol (e.g. teleportation, GHZ) inside ``Circuit.translate(op)``.
 
-All classes inherit from :class:`~netqmpi.sdk.core.operations.Operation`,
-so they flow through :class:`~netqmpi.sdk.core.operations.OperationContainer`
+All classes inherit from :class:`~netqmpi.sdk.operations.Operation`,
+so they flow through :class:`~netqmpi.sdk.operations.OperationContainer`
 and ``flatten()`` exactly like any gate or measurement.
 """
 from __future__ import annotations
 from typing import List
 
-from netqmpi.sdk.core.operations.operation import Operation
+from netqmpi.sdk.operations.operation import Operation
 
 
 class QSend(Operation):

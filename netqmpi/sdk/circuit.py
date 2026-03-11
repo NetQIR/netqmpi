@@ -7,24 +7,24 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Iterator, List, Optional
 
-from netqmpi.sdk.core.operations.qmpi import (
+from netqmpi.sdk.operations.qmpi import (
     Expose, QGather, QRecv, QScatter, QSend, Unexpose,
 )
-from netqmpi.sdk.core.operations.container import OperationContainer
-from netqmpi.sdk.core.operations.gate import ControlledGate, Gate
-from netqmpi.sdk.core.operations.non_unitary import Barrier, Measure, Reset
-from netqmpi.sdk.core.operations.operation import Operation
+from netqmpi.sdk.operations.container import OperationContainer
+from netqmpi.sdk.operations.gate import ControlledGate, Gate
+from netqmpi.sdk.operations.non_unitary import Barrier, Measure, Reset
+from netqmpi.sdk.operations.operation import Operation
 
 if TYPE_CHECKING:
-    from netqmpi.sdk.core.environment import Environment
+    from netqmpi.sdk import QMPICommunicator
 
 
 class _ExposeContext:
     """
     Context manager returned by :meth:`Circuit.expose`.
 
-    On entry  → appends :class:`~netqmpi.sdk.core.operations.Expose` to the circuit.
-    On exit   → appends the matching :class:`~netqmpi.sdk.core.operations.Unexpose`
+    On entry  → appends :class:`~netqmpi.sdk.operations.Expose` to the circuit.
+    On exit   → appends the matching :class:`~netqmpi.sdk.operations.Unexpose`
                 automatically, even if the body raises an exception.
 
     Usage::
@@ -55,7 +55,7 @@ class Circuit(ABC):
     Abstract class representing a quantum circuit.
 
     Provides:
-    - An :class:`~netqmpi.sdk.core.operations.OperationContainer` that
+    - An :class:`~netqmpi.sdk.operations.OperationContainer` that
       stores operations following the Composite pattern.
     - A fluent gate API (``h``, ``cx``, ``rx``, ``measure``, …) that appends
       operations to the container and returns *self* for chaining.
@@ -72,18 +72,18 @@ class Circuit(ABC):
         self,
         num_qubits: int,
         num_clbits: int,
-        environment: Optional[Environment] = None,
+        comm: QMPICommunicator,
     ) -> None:
         """
         Args:
             num_qubits:  Number of qubits in the circuit.
             num_clbits:  Number of classical bits in the circuit.
-            environment: The :class:`~netqmpi.sdk.core.environment.Environment`
+            environment: The :class:`~netqmpi.sdk.environment.Environment`
                          bound to this circuit (``None`` for standalone use).
         """
         self._num_qubits = num_qubits
         self._num_clbits = num_clbits
-        self._environment = environment
+        self._comm = comm
         self._ops = OperationContainer()
 
     # ------------------------------------------------------------------
@@ -102,13 +102,13 @@ class Circuit(ABC):
 
     @property
     def ops(self) -> OperationContainer:
-        """Root :class:`~netqmpi.sdk.core.operations.OperationContainer`."""
+        """Root :class:`~netqmpi.sdk.operations.OperationContainer`."""
         return self._ops
 
     @property
-    def environment(self) -> Optional[Environment]:
-        """The :class:`~netqmpi.sdk.core.environment.Environment` bound to this circuit."""
-        return self._environment
+    def comm(self) -> QMPICommunicator:
+        """The :class:`~netqmpi.sdk.environment.Environment` bound to this circuit."""
+        return self._comm
 
     # ------------------------------------------------------------------
     # Abstract interface
@@ -117,7 +117,7 @@ class Circuit(ABC):
     @abstractmethod
     def translate(self, op: Operation) -> Any:
         """
-        Translate a generic :class:`~netqmpi.sdk.core.operations.Operation`
+        Translate a generic :class:`~netqmpi.sdk.operations.Operation`
         into a backend-native instruction.
 
         Args:
@@ -125,6 +125,16 @@ class Circuit(ABC):
 
         Returns:
             A backend-specific object (gate call, instruction, …).
+        """
+
+    @abstractmethod
+    def build(self) -> Any:
+        """
+        Materialise the circuit for the backend by translating every
+        operation in :attr:`ops` via :meth:`translate`.
+
+        Returns:
+            A backend-native circuit object ready for execution.
         """
 
     # ------------------------------------------------------------------

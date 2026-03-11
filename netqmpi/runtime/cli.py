@@ -7,11 +7,12 @@ This module is intentionally free of any backend-specific imports
 in the corresponding adapter package.
 """
 
-import os, sys, time, argparse
+import time, argparse
 from typing import Optional
 
 from netqmpi.runtime import Executor
-from netqmpi.runtime.adapters import CunqaExecutorAdapter, NetQASMExecutorAdapter
+from netqmpi.runtime.adapters.cunqa import CunqaExecutorAdapter
+from netqmpi.runtime.adapters.netqasm import NetQASMExecutorAdapter
 from netqmpi.runtime.run_config import RunConfig
 
 def simulate(
@@ -43,8 +44,8 @@ def simulate(
     if timer:
         start = time.perf_counter()
 
-    app_instance = executor.build_app(script, num_processes=num_procs)
-    executor.run(app_instance, config)
+    apps_instance = executor.build_apps(script, size=num_procs)
+    executor.run(apps_instance, config)
 
     if timer:
         print(f"finished simulation in {round(time.perf_counter() - start, 2)} seconds")

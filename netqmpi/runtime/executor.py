@@ -4,7 +4,7 @@ Base abstraction for quantum circuit executors.
 Defines the full contract that all quantum backend adapters must follow:
 
 - Circuit factory (:meth:`create_circuit`) — Factory Method pattern.
-- Application builder (:meth:`build_app`) — wires up N rank processes from a
+- Application builder (:meth:`build_apps`) — wires up N rank processes from a
   user script.
 - Application runner (:meth:`run`) — executes the built application on the
   backend simulator or hardware.
@@ -15,13 +15,13 @@ allowed here; those live exclusively in the adapter packages.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from netqmpi.runtime.run_config import RunConfig
-from netqmpi.sdk.core.circuit import Circuit
+from netqmpi.sdk.circuit import Circuit
 
 if TYPE_CHECKING:
-    from netqmpi.sdk.core.environment import Environment
+    from netqmpi.sdk.communicator import QMPICommunicator
 
 
 class Executor(ABC):
@@ -31,10 +31,10 @@ class Executor(ABC):
     Combines three responsibilities into a single adapter contract:
 
     1. **Circuit factory** — :meth:`create_circuit` produces a
-       backend-specific :class:`~netqmpi.sdk.core.circuit.Circuit`.
-    2. **Application builder** — :meth:`build_app` loads a user script and
+       backend-specific :class:`~netqmpi.sdk.circuit.Circuit`.
+    2. **Application builder** — :meth:`build_apps` loads a user script and
        wires up *N* rank processes, each receiving an injected
-       :class:`~netqmpi.sdk.core.environment.Environment`.
+       :class:`~netqmpi.sdk.environment.Environment`.
     3. **Application runner** — :meth:`run` drives the built application
        through the backend simulator or hardware.
 
@@ -75,7 +75,7 @@ class Executor(ABC):
         self,
         num_qubits: int,
         num_clbits: int,
-        environment: Optional[Environment] = None,
+        comm: QMPICommunicator,
     ) -> Circuit:
         """
         Factory Method: creates a backend-specific quantum circuit.
@@ -83,15 +83,15 @@ class Executor(ABC):
         Args:
             num_qubits:  Number of qubits in the circuit.
             num_clbits:  Number of classical bits in the circuit.
-            environment: The :class:`~netqmpi.sdk.core.environment.Environment`
+            environment: The :class:`~netqmpi.sdk.environment.Environment`
                          to bind to the circuit.
 
         Returns:
-            A backend-specific :class:`~netqmpi.sdk.core.circuit.Circuit`.
+            A backend-specific :class:`~netqmpi.sdk.circuit.Circuit`.
         """
 
     @abstractmethod
-    def build_app(
+    def build_apps(
         self,
         file: str,
         num_processes: int,
@@ -102,7 +102,7 @@ class Executor(ABC):
         Load *file* and wire up *num_processes* rank instances.
 
         Each rank process receives an injected
-        :class:`~netqmpi.sdk.core.environment.Environment` that exposes
+        :class:`~netqmpi.sdk.environment.Environment` that exposes
         this executor's :meth:`create_circuit` factory.
 
         Args:
@@ -123,7 +123,7 @@ class Executor(ABC):
         Execute *app_instance* with the given *config*.
 
         Args:
-            app_instance: The object returned by :meth:`build_app`.
+            app_instance: The object returned by :meth:`build_apps`.
             config:       Simulation/execution parameters.  Backend adapters
                           may accept a subclass of :class:`RunConfig` that
                           carries additional backend-specific fields.

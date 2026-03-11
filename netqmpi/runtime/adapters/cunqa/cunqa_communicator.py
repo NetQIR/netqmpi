@@ -9,12 +9,9 @@ backend-agnostic :class:`QMPICommunicator` facade delegates to.
 """
 from __future__ import annotations
 
-from typing import Any, List
+from netqmpi.sdk import QMPICommunicator
 
-from netqmpi.sdk.communicator.base import BaseCommunicator
-
-
-class CunqaCommunicator(BaseCommunicator):
+class CunqaCommunicator(QMPICommunicator):
     """
     NetQASM-backed communicator for a single rank.
 
@@ -29,50 +26,11 @@ class CunqaCommunicator(BaseCommunicator):
                     rank.
     """
 
-    def __init__(self, rank: int, size: int, app_config: Any) -> None:
+    def __init__(self, rank: int, size: int) -> None:
         super().__init__(rank, size)
-        self._app_config = app_config
 
-    # ------------------------------------------------------------------
-    # Context manager
-    # ------------------------------------------------------------------
+    def __enter__(self) -> None:
+        return None
 
-    def __enter__(self) -> CunqaCommunicator:
-        pass
-
-    def __exit__(self, exc_type, exc_val, exc_tb) -> Any:
-        pass
-
-    # ------------------------------------------------------------------
-    # Connection helpers
-    # ------------------------------------------------------------------
-
-    @property
-    def connection(self):
-        pass
-
-    def flush(self) -> None:
-        pass
-
-    def create_qubit(self):
-        pass
-
-    # ------------------------------------------------------------------
-    # Socket access
-    # ------------------------------------------------------------------
-
-    def get_socket(self, my_rank: int, other_rank: int):
-        pass
-
-    def get_epr_socket(self, my_rank: int, other_rank: int):
-        pass
-
-    def get_epr_sockets_list(self):
-        pass
-
-    # ------------------------------------------------------------------
-    # Collective helpers
-    # ------------------------------------------------------------------
-
-    def create_ghz(self):
-        pass
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        return None

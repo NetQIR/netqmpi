@@ -3,9 +3,8 @@
 Contains the NetQASM-specific :class:`Executor`, :class:`RunConfig`,
 and :class:`NetQASMCommunicator`.
 """
-from netqmpi.runtime.adapters.netqasm.netqasm_communicator import (
-    NetQASMCommunicator,
-)
+from netqmpi.runtime.adapters.netqasm.netqasm_communicator import NetQASMCommunicator
+from netqmpi.runtime.adapters.netqasm.netqasm_circuit import NetQASMCircuitAdapter
 from netqmpi.runtime.adapters.netqasm.netqasm_executor import (
     NetQASMExecutorAdapter,
     NetQASMRunConfig,
@@ -13,6 +12,7 @@ from netqmpi.runtime.adapters.netqasm.netqasm_executor import (
 
 __all__ = [
     'NetQASMCommunicator',
+    'NetQASMCircuitAdapter',
     'NetQASMExecutorAdapter',
-    'NetQASMRunConfig',
+    'NetQASMRunConfig'
 ]

@@ -4,8 +4,8 @@ Non-unitary quantum operations: Measure, Reset, Barrier.
 from __future__ import annotations
 from typing import List, Optional
 
-from netqmpi.sdk.core.operations.gate import Gate
-from netqmpi.sdk.core.operations.operation import Operation
+from netqmpi.sdk.operations.gate import Gate
+from netqmpi.sdk.operations.operation import Operation
 
 
 class Measure(Operation):

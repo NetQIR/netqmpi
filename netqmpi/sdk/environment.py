@@ -12,11 +12,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from netqmpi.sdk.communicator.communicator import QMPICommunicator
-from netqmpi.sdk.core.circuit import Circuit
+from netqmpi.sdk.communicator import QMPICommunicator
+from netqmpi.sdk.circuit import Circuit
 
 if TYPE_CHECKING:
-    pass
+    from netqmpi.runtime import Executor
 
 
 class Environment:
@@ -52,7 +52,7 @@ class Environment:
                   instantiated by the runtime.
     """
 
-    def __init__(self, comm: QMPICommunicator, executor) -> None:
+    def __init__(self, comm: QMPICommunicator, executor: Executor) -> None:
         self._comm = comm
         self._executor = executor
 
@@ -78,7 +78,7 @@ class Environment:
             num_clbits: Number of classical bits in the circuit.
 
         Returns:
-            A backend-specific :class:`~netqmpi.sdk.core.circuit.Circuit`
+            A backend-specific :class:`~netqmpi.sdk.circuit.Circuit`
             instance ready to receive quantum operations.
         """
-        return self._executor.create_circuit(num_qubits, num_clbits, environment=self)
+        return self._executor.create_circuit(num_qubits, num_clbits, comm=self.comm)

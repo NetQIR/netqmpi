@@ -5,7 +5,7 @@ Implements the full :class:`~netqmpi.runtime.executor.Executor` contract for
 the NetQASM simulator:
 
 - :meth:`create_circuit`  — Factory Method for NetQASM circuits.
-- :meth:`build_app`       — loads a user script and wires up N rank processes.
+- :meth:`build_apps`       — loads a user script and wires up N rank processes.
 - :meth:`run`             — drives the NetQASM simulator.
 
 This is the only file in the NetQASM adapter layer that is allowed to import
@@ -30,12 +30,11 @@ from netqasm.util.yaml import load_yaml
 
 from netqmpi.runtime.executor import Executor
 from netqmpi.runtime.run_config import RunConfig
-from netqmpi.runtime.adapters import NetQASMCommunicator
+from netqmpi.runtime.adapters.netqasm import NetQASMCommunicator, NetQASMCircuitAdapter
 
-from netqmpi.sdk.adapters.netqasm import NetQASMCircuitAdapter
-from netqmpi.sdk.communicator import QMPICommunicator
-from netqmpi.sdk.core.circuit import Circuit
-from netqmpi.sdk.core.environment import Environment
+from netqmpi.sdk import QMPICommunicator
+from netqmpi.sdk.circuit import Circuit
+from netqmpi.sdk.environment import Environment
 from netqmpi.helpers import load_main
 
 # ---------------------------------------------------------------------------
@@ -61,27 +60,6 @@ class NetQASMRunConfig(RunConfig):
     formalism: Formalism = field(default_factory=lambda: Formalism.KET)
     network_config: Optional[NetworkConfig] = None
     log_cfg: Optional[LogConfig] = None
-
-
-# ---------------------------------------------------------------------------
-# Private helper
-# ---------------------------------------------------------------------------
-
-def _make_environment_injector(main_func, rank: int, size: int, executor: Executor):
-    """Wrap *main_func* to inject a :class:`~netqmpi.sdk.core.environment.Environment`.
-
-    The returned wrapper is called by the NetQASM runtime with ``app_config``
-    and builds both the :class:`~netqmpi.sdk.communicator.QMPICommunicator`
-    and the :class:`~netqmpi.sdk.core.environment.Environment` before
-    forwarding to the original function.
-    """
-    def wrapper(app_config=None):
-        backend = NetQASMCommunicator(rank, size, app_config)
-        comm = QMPICommunicator(backend)
-        environment = Environment(comm, executor)
-        return main_func(env=environment)
-    return wrapper
-
 
 # ---------------------------------------------------------------------------
 # Concrete Executor
@@ -112,7 +90,7 @@ class NetQASMExecutorAdapter(Executor):
         self,
         num_qubits: int,
         num_clbits: int,
-        environment: Optional[Environment] = None,
+        comm: NetQASMCommunicator,
     ) -> Circuit:
         """
         Factory Method: creates a :class:`~netqmpi.sdk.adapters.netqasm.NetQASMCircuitAdapter`.
@@ -120,22 +98,36 @@ class NetQASMExecutorAdapter(Executor):
         Args:
             num_qubits:  Number of qubits in the circuit.
             num_clbits:  Number of classical bits in the circuit.
-            environment: The :class:`~netqmpi.sdk.core.environment.Environment`
+            environment: The :class:`~netqmpi.sdk.environment.Environment`
                          to bind to the circuit.
 
         Returns:
             :class:`~netqmpi.sdk.adapters.netqasm.NetQASMCircuitAdapter` instance.
         """
-        return NetQASMCircuitAdapter(num_qubits, num_clbits, environment=environment)
+        return NetQASMCircuitAdapter(num_qubits, num_clbits, comm=comm)
 
     # ------------------------------------------------------------------
     # Executor interface — application builder
     # ------------------------------------------------------------------
 
-    def build_app(
+    def _make_environment_injector(self, main_func, rank: int, size: int):
+        """Wrap *main_func* to inject a :class:`~netqmpi.sdk.core.environment.Environment`.
+
+        The returned wrapper is called by the NetQASM runtime with ``app_config``
+        and builds both the :class:`~netqmpi.sdk.communicator.QMPICommunicator`
+        and the :class:`~netqmpi.sdk.core.environment.Environment` before
+        forwarding to the original function.
+        """
+        def wrapped_main(app_config=None):
+            env = Environment(NetQASMCommunicator(rank, size, app_config), self)
+            main_func(env=env)
+            
+        return wrapped_main
+
+    def build_apps(
         self,
         file: str,
-        num_processes: int,
+        size: int,
         argv_file: Optional[str] = None,
         roles_cfg_file: str = "roles.yaml",
     ) -> ApplicationInstance:
@@ -143,7 +135,7 @@ class NetQASMExecutorAdapter(Executor):
         Load *file* and create a
         :class:`~netqasm.runtime.application.ApplicationInstance` with
         *num_processes* rank entries, each wrapping ``main`` with an injected
-        :class:`~netqmpi.sdk.core.environment.Environment` backed by *self*.
+        :class:`~netqmpi.sdk.environment.Environment` backed by *self*.
 
         Args:
             file:           Path to the NetQMPI ``.py`` script.
@@ -165,15 +157,15 @@ class NetQASMExecutorAdapter(Executor):
             raise ValueError("file must be a .py file")
 
         argv: dict = load_yaml(argv_file) if argv_file is not None else {}
+        main_func = load_main(file)
 
         programs: list = []
         argv_per_rank: dict = {}
 
-        for rank_int in range(num_processes):
-            rank_name = f"rank_{rank_int}"
-            main_func = load_main(file)
-
-            wrapped_main = _make_environment_injector(main_func, rank_int, num_processes, self)
+        for rank in range(size):
+            rank_name = f"rank_{rank}"
+            
+            wrapped_main = self._make_environment_injector(main_func, rank, size)
             programs.append(Program(party=rank_name, entry=wrapped_main, args=[], results=[]))
             argv_per_rank[rank_name] = argv.copy()
 
@@ -199,7 +191,7 @@ class NetQASMExecutorAdapter(Executor):
         Run *app_instance* through the NetQASM simulator.
 
         Args:
-            app_instance: Object returned by :meth:`build_app`.
+            app_instance: Object returned by :meth:`build_apps`.
             config:       Simulation parameters.  Pass a
                           :class:`NetQASMRunConfig` to control NetQASM-specific
                           options such as *formalism* or *log_cfg*.
