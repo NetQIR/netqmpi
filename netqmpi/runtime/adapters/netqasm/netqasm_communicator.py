@@ -1,11 +1,11 @@
 """
 Concrete :class:`~netqmpi.sdk.communicator.base.BaseCommunicator` backed
-by the **NetQASM** SDK.
+by the NetQASM SDK.
 
-This is the only communicator file that is allowed to import from
-``netqasm.*``.  It provides all the low-level resource management
-(connections, EPR sockets, classical sockets, GHZ creation) that the
-backend-agnostic :class:`QMPICommunicator` facade delegates to.
+This is the only communicator module allowed to import from
+``netqasm.*``. It provides the low-level resource management delegated by
+the backend-agnostic :class:`QMPICommunicator` facade, including
+connections, EPR sockets, and classical sockets.
 """
 from __future__ import annotations
 
@@ -20,18 +20,25 @@ class NetQASMCommunicator(QMPICommunicator):
     """
     NetQASM-backed communicator for a single rank.
 
-    Created by the runtime
-    (:func:`~netqmpi.runtime.adapters.netqasm.netqasm_executor._make_environment_injector`)
-    and injected into :class:`~netqmpi.sdk.communicator.QMPICommunicator`.
+    This class provides the backend-specific communication resources used
+    by the NetQASM runtime adapter, including the NetQASM connection,
+    EPR sockets, and lazily created classical sockets.
 
     Args:
-        rank:       This rank's numeric index.
-        size:       Total number of ranks in the world.
-        app_config: NetQASM ``AppConfig`` returned by the simulator for this
-                    rank.
+        rank: Numeric index of the current rank.
+        size: Total number of ranks in the communicator.
+        app_config: NetQASM application configuration associated with this rank.
     """
 
     def __init__(self, rank: int, size: int, app_config: Any) -> None:
+        """
+        Initialize the NetQASM communicator.
+
+        Args:
+            rank: Numeric index of the current rank.
+            size: Total number of ranks in the communicator.
+            app_config: NetQASM application configuration associated with this rank.
+        """
         super().__init__(rank, size)
         self._app_config = app_config
 
@@ -70,21 +77,60 @@ class NetQASMCommunicator(QMPICommunicator):
     
     @property
     def sockets(self) -> Dict[str, Dict[str, Socket]]:
+        """
+        Return the classical sockets indexed by rank name.
+
+        Returns:
+            A nested mapping of classical sockets.
+        """
         return self._sockets
     
     @property
     def epr_sockets(self) -> Dict[str, Dict[str, EPRSocket]]:
+        """
+        Return the EPR sockets indexed by rank name.
+
+        Returns:
+            A nested mapping of EPR sockets.
+        """
         return self._epr_sockets
     
     def __enter__(self) -> NetQASMCommunicator:
+        """
+        Enter the NetQASM connection context.
+
+        Returns:
+            The current communicator instance.
+        """
         self._connection.__enter__()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> Any:
+        """
+        Exit the NetQASM connection context.
+
+        Args:
+            exc_type: Exception type, if one was raised.
+            exc_val: Exception instance, if one was raised.
+            exc_tb: Traceback, if one was raised.
+
+        Returns:
+            The result of the underlying connection ``__exit__`` method.
+        """
         return self._connection.__exit__(exc_type, exc_val, exc_tb)
 
 
     def get_socket(self, my_rank: int, other_rank: int) -> Socket:
+        """
+        Return the classical socket between two ranks, creating it if needed.
+
+        Args:
+            my_rank: Rank requesting the socket.
+            other_rank: Rank at the other endpoint of the socket.
+
+        Returns:
+            The classical socket connecting the two ranks.
+        """
         my_sockets = self._sockets[self.get_rank_name(my_rank)]
         other_name = self.get_rank_name(other_rank)
 
@@ -96,6 +142,19 @@ class NetQASMCommunicator(QMPICommunicator):
         return my_sockets[other_name]
 
     def get_epr_socket(self, my_rank: int, other_rank: int) -> EPRSocket:
+        """
+        Return the EPR socket between two ranks.
+
+        Args:
+            my_rank: Rank requesting the socket.
+            other_rank: Rank at the other endpoint of the socket.
+
+        Returns:
+            The EPR socket connecting the two ranks.
+
+        Raises:
+            RuntimeError: If the requested EPR socket does not exist.
+        """
         my_eprs = self.epr_sockets[self.get_rank_name(my_rank)]
         other_name = self.get_rank_name(other_rank)
 
@@ -108,9 +167,18 @@ class NetQASMCommunicator(QMPICommunicator):
         return my_eprs[other_name]
 
     def flush(self) -> None:
+        """
+        Flush the underlying NetQASM connection.
+        """
         self._connection.flush()
         
     def create_qubit(self):
+        """
+        Create a new qubit on the underlying NetQASM connection.
+
+        Returns:
+            A newly allocated NetQASM qubit.
+        """
         return Qubit(self._connection)
 
     # ------------------------------------------------------------------
@@ -119,4 +187,10 @@ class NetQASMCommunicator(QMPICommunicator):
 
     @property
     def connection(self) -> NetQASMConnection:
+        """
+        Return the underlying NetQASM connection.
+
+        Returns:
+            The active NetQASM connection.
+        """
         return self._connection

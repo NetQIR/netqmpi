@@ -1,7 +1,10 @@
 """
 Base abstraction for quantum circuits.
 
-Defines the contract that all circuit adapters must follow.
+This module defines the contract that all circuit adapters must follow.
+It provides a backend-agnostic circuit representation based on generic
+operations and exposes the abstract hooks required by concrete backend
+implementations.
 """
 from __future__ import annotations
 from abc import ABC, abstractmethod
@@ -23,49 +26,73 @@ class _ExposeContext:
     """
     Context manager returned by :meth:`Circuit.expose`.
 
-    On entry  → appends :class:`~netqmpi.sdk.operations.Expose` to the circuit.
-    On exit   → appends the matching :class:`~netqmpi.sdk.operations.Unexpose`
-                automatically, even if the body raises an exception.
+    On entry, it appends :class:`~netqmpi.sdk.operations.qmpi.Expose` to
+    the circuit. On exit, it automatically appends the matching
+    :class:`~netqmpi.sdk.operations.qmpi.Unexpose`, even if an exception
+    is raised inside the context.
 
-    Usage::
-
+    Example:
         with circuit.expose([0, 1], rank=0):
             circuit.h(0).cx(0, 1)
-        # Unexpose(rank=0) has been added here
     """
 
     def __init__(self, circuit: "Circuit", qubits: List[int], rank: int) -> None:
+        """
+        Initialize the expose context manager.
+
+        Args:
+            circuit: Circuit associated with the expose operation.
+            qubits: Local qubit indices to expose.
+            rank: Rank acting as the exposer.
+        """
         self._circuit = circuit
         self._qubits = qubits
         self._rank = rank
 
     def __enter__(self) -> "Circuit":
-        """Appends Expose and returns the circuit for further chaining."""
+        """
+        Enter the expose context and return the circuit.
+
+        Returns:
+            The circuit instance, allowing method chaining inside the
+            context.
+        """
         self._circuit._add(Expose(self._qubits, self._rank))
         return self._circuit
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
-        """Appends Unexpose regardless of whether the body raised."""
+        """
+        Exit the expose context and append the matching unexpose operation.
+
+        Args:
+            exc_type: Exception type, if one was raised.
+            exc_val: Exception instance, if one was raised.
+            exc_tb: Traceback, if one was raised.
+
+        Returns:
+            ``False`` so that exceptions, if any, are not suppressed.
+        """
         self._circuit._add(Unexpose(self._rank))
         return False  # never suppress exceptions
 
 
 class Circuit(ABC):
     """
-    Abstract class representing a quantum circuit.
+    Abstract base class representing a quantum circuit.
 
-    Provides:
-    - An :class:`~netqmpi.sdk.operations.OperationContainer` that
-      stores operations following the Composite pattern.
-    - A fluent gate API (``h``, ``cx``, ``rx``, ``measure``, …) that appends
-      operations to the container and returns *self* for chaining.
-    - Abstract hooks :meth:`translate` and :meth:`build` that each backend
-      adapter must implement to convert the generic operations into
-      backend-native instructions.
+    This class provides:
+
+    - An :class:`~netqmpi.sdk.operations.container.OperationContainer`
+      storing operations according to the Composite pattern.
+    - A fluent gate API (``h``, ``cx``, ``rx``, ``measure``, etc.) that
+      appends operations to the container and returns ``self`` for
+      chaining.
+    - Abstract hooks :meth:`translate` and :meth:`build` that concrete
+      backend adapters must implement.
 
     Attributes:
-        num_qubits (int): Number of qubits in the circuit.
-        num_clbits (int): Number of classical bits in the circuit.
+        num_qubits: Number of qubits in the circuit.
+        num_clbits: Number of classical bits in the circuit.
     """
 
     def __init__(
@@ -75,11 +102,12 @@ class Circuit(ABC):
         comm: QMPICommunicator,
     ) -> None:
         """
+        Initialize the circuit.
+
         Args:
-            num_qubits:  Number of qubits in the circuit.
-            num_clbits:  Number of classical bits in the circuit.
-            environment: The :class:`~netqmpi.sdk.environment.Environment`
-                         bound to this circuit (``None`` for standalone use).
+            num_qubits: Number of qubits in the circuit.
+            num_clbits: Number of classical bits in the circuit.
+            comm: Communicator associated with the circuit.
         """
         self._num_qubits = num_qubits
         self._num_clbits = num_clbits
@@ -92,22 +120,42 @@ class Circuit(ABC):
 
     @property
     def num_qubits(self) -> int:
-        """Returns the number of qubits in the circuit."""
+        """
+        Return the number of qubits in the circuit.
+
+        Returns:
+            The number of qubits.
+        """
         return self._num_qubits
 
     @property
     def num_clbits(self) -> int:
-        """Returns the number of classical bits in the circuit."""
+        """
+        Return the number of classical bits in the circuit.
+
+        Returns:
+            The number of classical bits.
+        """
         return self._num_clbits
 
     @property
     def ops(self) -> OperationContainer:
-        """Root :class:`~netqmpi.sdk.operations.OperationContainer`."""
+        """
+        Return the root operation container.
+
+        Returns:
+            The operation container storing the circuit operations.
+        """
         return self._ops
 
     @property
     def comm(self) -> QMPICommunicator:
-        """The :class:`~netqmpi.sdk.environment.Environment` bound to this circuit."""
+        """
+        Return the communicator associated with the circuit.
+
+        Returns:
+            The circuit communicator.
+        """
         return self._comm
 
     # ------------------------------------------------------------------
@@ -117,21 +165,20 @@ class Circuit(ABC):
     @abstractmethod
     def translate(self, op: Operation) -> Any:
         """
-        Translate a generic :class:`~netqmpi.sdk.operations.Operation`
-        into a backend-native instruction.
+        Translate a generic operation into a backend-native instruction.
 
         Args:
-            op: The operation to translate.
+            op: Operation to translate.
 
         Returns:
-            A backend-specific object (gate call, instruction, …).
+            A backend-specific object representing the translated
+            operation.
         """
 
     @abstractmethod
     def build(self) -> Any:
         """
-        Materialise the circuit for the backend by translating every
-        operation in :attr:`ops` via :meth:`translate`.
+        Materialize the circuit for the target backend.
 
         Returns:
             A backend-native circuit object ready for execution.
@@ -142,17 +189,43 @@ class Circuit(ABC):
     # ------------------------------------------------------------------
 
     def _check_qubit(self, qubit: int) -> None:
+        """
+        Validate a qubit index.
+
+        Args:
+            qubit: Qubit index to validate.
+
+        Raises:
+            IndexError: If the qubit index is out of range.
+        """
         if not (0 <= qubit < self._num_qubits):
             raise IndexError(
                 f"Qubit index {qubit} out of range [0, {self._num_qubits}).")
 
     def _check_cbit(self, cbit: int) -> None:
+        """
+        Validate a classical bit index.
+
+        Args:
+            cbit: Classical bit index to validate.
+
+        Raises:
+            IndexError: If the classical bit index is out of range.
+        """
         if not (0 <= cbit < self._num_clbits):
             raise IndexError(
                 f"Classical bit index {cbit} out of range [0, {self._num_clbits}).")
 
     def _add(self, op: Operation) -> Circuit:
-        """Append *op* and return *self* for chaining."""
+        """
+        Append an operation to the circuit.
+
+        Args:
+            op: Operation to append.
+
+        Returns:
+            The current circuit instance.
+        """
         self._ops.add(op)
         return self
 
@@ -161,42 +234,106 @@ class Circuit(ABC):
     # ------------------------------------------------------------------
 
     def h(self, qubit: int) -> Circuit:
-        """Hadamard gate on *qubit*."""
+        """
+        Apply a Hadamard gate to a qubit.
+
+        Args:
+            qubit: Target qubit index.
+
+        Returns:
+            The current circuit instance.
+        """
         self._check_qubit(qubit)
         return self._add(Gate('H', [qubit]))
 
     def x(self, qubit: int) -> Circuit:
-        """Pauli-X (NOT) gate on *qubit*."""
+        """
+        Apply a Pauli-X gate to a qubit.
+
+        Args:
+            qubit: Target qubit index.
+
+        Returns:
+            The current circuit instance.
+        """
         self._check_qubit(qubit)
         return self._add(Gate('X', [qubit]))
 
     def y(self, qubit: int) -> Circuit:
-        """Pauli-Y gate on *qubit*."""
+        """
+        Apply a Pauli-Y gate to a qubit.
+
+        Args:
+            qubit: Target qubit index.
+
+        Returns:
+            The current circuit instance.
+        """
         self._check_qubit(qubit)
         return self._add(Gate('Y', [qubit]))
 
     def z(self, qubit: int) -> Circuit:
-        """Pauli-Z gate on *qubit*."""
+        """
+        Apply a Pauli-Z gate to a qubit.
+
+        Args:
+            qubit: Target qubit index.
+
+        Returns:
+            The current circuit instance.
+        """
         self._check_qubit(qubit)
         return self._add(Gate('Z', [qubit]))
 
     def s(self, qubit: int) -> Circuit:
-        """S (phase) gate on *qubit*."""
+        """
+        Apply an S gate to a qubit.
+
+        Args:
+            qubit: Target qubit index.
+
+        Returns:
+            The current circuit instance.
+        """
         self._check_qubit(qubit)
         return self._add(Gate('S', [qubit]))
 
     def sdg(self, qubit: int) -> Circuit:
-        """S† (conjugate phase) gate on *qubit*."""
+        """
+        Apply an S-dagger gate to a qubit.
+
+        Args:
+            qubit: Target qubit index.
+
+        Returns:
+            The current circuit instance.
+        """
         self._check_qubit(qubit)
         return self._add(Gate('SDG', [qubit]))
 
     def t(self, qubit: int) -> Circuit:
-        """T gate on *qubit*."""
+        """
+        Apply a T gate to a qubit.
+
+        Args:
+            qubit: Target qubit index.
+
+        Returns:
+            The current circuit instance.
+        """
         self._check_qubit(qubit)
         return self._add(Gate('T', [qubit]))
 
     def tdg(self, qubit: int) -> Circuit:
-        """T† (conjugate T) gate on *qubit*."""
+        """
+        Apply a T-dagger gate to a qubit.
+
+        Args:
+            qubit: Target qubit index.
+
+        Returns:
+            The current circuit instance.
+        """
         self._check_qubit(qubit)
         return self._add(Gate('TDG', [qubit]))
 
@@ -205,17 +342,44 @@ class Circuit(ABC):
     # ------------------------------------------------------------------
 
     def rx(self, theta: float, qubit: int) -> Circuit:
-        """Rotation around X axis by *theta* radians on *qubit*."""
+        """
+        Apply an X-axis rotation to a qubit.
+
+        Args:
+            theta: Rotation angle in radians.
+            qubit: Target qubit index.
+
+        Returns:
+            The current circuit instance.
+        """
         self._check_qubit(qubit)
         return self._add(Gate('RX', [qubit], [theta]))
 
     def ry(self, theta: float, qubit: int) -> Circuit:
-        """Rotation around Y axis by *theta* radians on *qubit*."""
+        """
+        Apply a Y-axis rotation to a qubit.
+
+        Args:
+            theta: Rotation angle in radians.
+            qubit: Target qubit index.
+
+        Returns:
+            The current circuit instance.
+        """
         self._check_qubit(qubit)
         return self._add(Gate('RY', [qubit], [theta]))
 
     def rz(self, theta: float, qubit: int) -> Circuit:
-        """Rotation around Z axis by *theta* radians on *qubit*."""
+        """
+        Apply a Z-axis rotation to a qubit.
+
+        Args:
+            theta: Rotation angle in radians.
+            qubit: Target qubit index.
+
+        Returns:
+            The current circuit instance.
+        """
         self._check_qubit(qubit)
         return self._add(Gate('RZ', [qubit], [theta]))
 
@@ -224,25 +388,62 @@ class Circuit(ABC):
     # ------------------------------------------------------------------
 
     def cx(self, control: int, target: int) -> Circuit:
-        """CNOT gate: *control* → *target*."""
+        """
+        Apply a controlled-X gate.
+
+        Args:
+            control: Control qubit index.
+            target: Target qubit index.
+
+        Returns:
+            The current circuit instance.
+        """
         self._check_qubit(control)
         self._check_qubit(target)
         return self._add(ControlledGate([control], [Gate('X', [target])]))
 
     def cz(self, control: int, target: int) -> Circuit:
-        """CZ gate: *control* → *target*."""
+        """
+        Apply a controlled-Z gate.
+
+        Args:
+            control: Control qubit index.
+            target: Target qubit index.
+
+        Returns:
+            The current circuit instance.
+        """
         self._check_qubit(control)
         self._check_qubit(target)
         return self._add(ControlledGate([control], [Gate('Z', [target])]))
 
     def swap(self, qubit1: int, qubit2: int) -> Circuit:
-        """SWAP gate between *qubit1* and *qubit2*."""
+        """
+        Apply a SWAP gate between two qubits.
+
+        Args:
+            qubit1: First qubit index.
+            qubit2: Second qubit index.
+
+        Returns:
+            The current circuit instance.
+        """
         self._check_qubit(qubit1)
         self._check_qubit(qubit2)
         return self._add(Gate('SWAP', [qubit1, qubit2]))
 
     def crz(self, theta: float, control: int, target: int) -> Circuit:
-        """Controlled-RZ gate."""
+        """
+        Apply a controlled-RZ gate.
+
+        Args:
+            theta: Rotation angle in radians.
+            control: Control qubit index.
+            target: Target qubit index.
+
+        Returns:
+            The current circuit instance.
+        """
         self._check_qubit(control)
         self._check_qubit(target)
         return self._add(ControlledGate([control], [Gate('RZ', [target], [theta])]))
@@ -252,7 +453,17 @@ class Circuit(ABC):
     # ------------------------------------------------------------------
 
     def ccx(self, control1: int, control2: int, target: int) -> Circuit:
-        """Toffoli (CCX) gate."""
+        """
+        Apply a Toffoli gate.
+
+        Args:
+            control1: First control qubit index.
+            control2: Second control qubit index.
+            target: Target qubit index.
+
+        Returns:
+            The current circuit instance.
+        """
         self._check_qubit(control1)
         self._check_qubit(control2)
         self._check_qubit(target)
@@ -263,13 +474,30 @@ class Circuit(ABC):
     # ------------------------------------------------------------------
 
     def measure(self, qubit: int, cbit: int) -> Circuit:
-        """Measure *qubit* into classical bit *cbit*."""
+        """
+        Measure a qubit into a classical bit.
+
+        Args:
+            qubit: Measured qubit index.
+            cbit: Destination classical bit index.
+
+        Returns:
+            The current circuit instance.
+        """
         self._check_qubit(qubit)
         self._check_cbit(cbit)
         return self._add(Measure(qubit, cbit))
 
     def measure_all(self) -> Circuit:
-        """Measure every qubit into the classical bit of the same index."""
+        """
+        Measure every qubit into the classical bit of the same index.
+
+        Returns:
+            The current circuit instance.
+
+        Raises:
+            ValueError: If there are fewer classical bits than qubits.
+        """
         if self._num_clbits < self._num_qubits:
             raise ValueError(
                 "Not enough classical bits to measure all qubits "
@@ -280,7 +508,15 @@ class Circuit(ABC):
         return self
 
     def reset(self, qubit: int) -> Circuit:
-        """Reset *qubit* to |0⟩."""
+        """
+        Reset a qubit to the ``|0⟩`` state.
+
+        Args:
+            qubit: Target qubit index.
+
+        Returns:
+            The current circuit instance.
+        """
         self._check_qubit(qubit)
         return self._add(Reset(qubit))
 
@@ -289,7 +525,11 @@ class Circuit(ABC):
         Insert a barrier.
 
         Args:
-            qubits: Qubits to barrier.  ``None`` (default) = full-circuit barrier.
+            qubits: Qubits to include in the barrier. If ``None``, the
+                barrier applies to the full circuit.
+
+        Returns:
+            The current circuit instance.
         """
         if qubits is not None:
             for q in qubits:
@@ -302,9 +542,16 @@ class Circuit(ABC):
 
     def qsend(self, qubits: List[int], dest_rank: int) -> Circuit:
         """
-        Send *qubits* to *dest_rank*.
+        Send qubits to another rank.
 
-        The adapter chooses the transfer protocol (e.g. teleportation).
+        The backend adapter decides the concrete transfer protocol.
+
+        Args:
+            qubits: Local qubit indices to send.
+            dest_rank: Destination rank.
+
+        Returns:
+            The current circuit instance.
         """
         for q in qubits:
             self._check_qubit(q)
@@ -312,49 +559,75 @@ class Circuit(ABC):
 
     def qrecv(self, qubits: List[int], src_rank: int) -> Circuit:
         """
-        Receive qubits from *src_rank* into local qubit slots *qubits*.
+        Receive qubits from another rank into local qubit slots.
 
-        ``len(qubits)`` determines how many qubits are expected.
+        Args:
+            qubits: Local qubit indices that will receive the incoming qubits.
+            src_rank: Source rank.
+
+        Returns:
+            The current circuit instance.
         """
         for q in qubits:
             self._check_qubit(q)
         return self._add(QRecv(qubits, src_rank))
 
     def qscatter(self, qubits: List[int], sender_rank: int) -> Circuit:
-        """Scatter *qubits* from *sender_rank* across all ranks."""
+        """
+        Scatter qubits from one rank across all ranks.
+
+        Args:
+            qubits: Qubits involved in the scatter operation.
+            sender_rank: Rank acting as the sender.
+
+        Returns:
+            The current circuit instance.
+        """
         for q in qubits:
             self._check_qubit(q)
         return self._add(QScatter(qubits, sender_rank))
 
     def qgather(self, qubits: List[int], recv_rank: int) -> Circuit:
-        """Contribute *qubits* to a gather into *recv_rank*."""
+        """
+        Contribute qubits to a gather operation.
+
+        Args:
+            qubits: Qubits contributed to the gather.
+            recv_rank: Rank receiving the gathered qubits.
+
+        Returns:
+            The current circuit instance.
+        """
         for q in qubits:
             self._check_qubit(q)
         return self._add(QGather(qubits, recv_rank))
 
     def expose(self, qubits: List[int], rank: int = 0) -> _ExposeContext:
         """
-        Expose *qubits* to the network via a shared GHZ state.
-
-        Returns an :class:`_ExposeContext` that can be used as a
-        ``with`` statement.  The matching :class:`Unexpose` is appended
-        automatically when the ``with`` block exits::
-
-            with circuit.expose([0], rank=0):
-                circuit.h(0)
-            # Unexpose(rank=0) inserted here
+        Expose qubits to the network through a shared GHZ state.
 
         Args:
             qubits: Local qubit indices to expose.
-            rank:   Exposer rank (default: 0).
+            rank: Exposer rank.
+
+        Returns:
+            A context manager that automatically appends the matching
+            :class:`Unexpose` operation when the context exits.
         """
         for q in qubits:
             self._check_qubit(q)
         return _ExposeContext(self, qubits, rank)
 
     def unexpose(self, rank: int = 0) -> Circuit:
-        """Manually close an expose window for *rank* (use :meth:`expose` as a
-        context manager instead when possible)."""
+        """
+        Manually close an expose window.
+
+        Args:
+            rank: Exposer rank associated with the expose operation.
+
+        Returns:
+            The current circuit instance.
+        """
         return self._add(Unexpose(rank))
 
     # ------------------------------------------------------------------
@@ -362,9 +635,19 @@ class Circuit(ABC):
     # ------------------------------------------------------------------
 
     def __iter__(self) -> Iterator[Operation]:
-        """Iterates over all leaf operations in the circuit."""
+        """
+        Iterate over all leaf operations in the circuit.
+
+        Returns:
+            An iterator over the flattened circuit operations.
+        """
         return self._ops.flatten()
 
     def __len__(self) -> int:
-        """Number of top-level entries in the operation container."""
+        """
+        Return the number of top-level entries in the operation container.
+
+        Returns:
+            The number of top-level stored operations.
+        """
         return len(self._ops)

@@ -1,16 +1,12 @@
 """
 Base abstraction for quantum circuit executors.
 
-Defines the full contract that all quantum backend adapters must follow:
+This module defines the contract that all quantum backend adapters must
+implement, including circuit creation, application construction, and
+application execution.
 
-- Circuit factory (:meth:`create_circuit`) — Factory Method pattern.
-- Application builder (:meth:`build_apps`) — wires up N rank processes from a
-  user script.
-- Application runner (:meth:`run`) — executes the built application on the
-  backend simulator or hardware.
-
-Belongs to the RUNTIME layer. No imports from ``netqasm`` or ``cunqa`` are
-allowed here; those live exclusively in the adapter packages.
+It belongs to the runtime layer, so imports from backend-specific
+packages such as ``netqasm`` or ``cunqa`` must not appear here.
 """
 from __future__ import annotations
 
@@ -26,28 +22,27 @@ if TYPE_CHECKING:
 
 class Executor(ABC):
     """
-    Abstract class representing a quantum backend executor.
+    Abstract base class for quantum backend executors.
 
-    Combines three responsibilities into a single adapter contract:
+    This interface combines three responsibilities into a single adapter
+    contract:
 
-    1. **Circuit factory** — :meth:`create_circuit` produces a
-       backend-specific :class:`~netqmpi.sdk.circuit.Circuit`.
-    2. **Application builder** — :meth:`build_apps` loads a user script and
-       wires up *N* rank processes, each receiving an injected
-       :class:`~netqmpi.sdk.environment.Environment`.
-    3. **Application runner** — :meth:`run` drives the built application
-       through the backend simulator or hardware.
+    1. Circuit factory through :meth:`create_circuit`.
+    2. Application builder through :meth:`build_apps`.
+    3. Application runner through :meth:`run`.
 
     Attributes:
-        size (int):             Number of nodes/resources in this executor.
-        config (Dict[str, Any]): Backend-specific configuration.
+        size: Number of nodes or resources managed by the executor.
+        config: Backend-specific configuration dictionary.
     """
 
     def __init__(self, size: int, config: Dict[str, Any] = None) -> None:
         """
+        Initialize the executor.
+
         Args:
-            size:   Number of available nodes or resources.
-            config: Dictionary with backend-specific configuration.
+            size: Number of available nodes or resources.
+            config: Backend-specific configuration dictionary.
         """
         self._size = size
         self._config = config or {}
@@ -58,12 +53,22 @@ class Executor(ABC):
 
     @property
     def size(self) -> int:
-        """Returns the number of nodes/resources of this executor."""
+        """
+        Return the number of nodes or resources managed by this executor.
+
+        Returns:
+            The executor size.
+        """
         return self._size
 
     @property
     def config(self) -> Dict[str, Any]:
-        """Returns the backend-specific configuration."""
+        """
+        Return the backend-specific configuration.
+
+        Returns:
+            The configuration dictionary.
+        """
         return self._config
 
     # ------------------------------------------------------------------
@@ -78,13 +83,12 @@ class Executor(ABC):
         comm: QMPICommunicator,
     ) -> Circuit:
         """
-        Factory Method: creates a backend-specific quantum circuit.
+        Create a backend-specific quantum circuit.
 
         Args:
-            num_qubits:  Number of qubits in the circuit.
-            num_clbits:  Number of classical bits in the circuit.
-            environment: The :class:`~netqmpi.sdk.environment.Environment`
-                         to bind to the circuit.
+            num_qubits: Number of qubits in the circuit.
+            num_clbits: Number of classical bits in the circuit.
+            comm: Communicator associated with the circuit.
 
         Returns:
             A backend-specific :class:`~netqmpi.sdk.circuit.Circuit`.
@@ -99,17 +103,18 @@ class Executor(ABC):
         roles_cfg_file: str = "roles.yaml",
     ) -> Any:
         """
-        Load *file* and wire up *num_processes* rank instances.
+        Load a script and build the rank-specific application instances.
 
-        Each rank process receives an injected
-        :class:`~netqmpi.sdk.environment.Environment` that exposes
-        this executor's :meth:`create_circuit` factory.
+        Each rank receives an injected
+        :class:`~netqmpi.sdk.environment.Environment` exposing this
+        executor's :meth:`create_circuit` factory.
 
         Args:
-            file:           Path to the NetQMPI ``.py`` script.  Must contain
-                            a ``main(env=None)`` function.
-            num_processes:  Number of parallel quantum nodes to simulate.
-            argv_file:      Optional YAML file with per-rank argument values.
+            file: Path to the NetQMPI Python script. It must contain a
+                ``main(env=None)`` function.
+            num_processes: Number of parallel quantum nodes to simulate.
+            argv_file: Optional YAML file containing per-rank argument
+                values.
             roles_cfg_file: Path to the roles configuration YAML file.
 
         Returns:
@@ -120,11 +125,11 @@ class Executor(ABC):
     @abstractmethod
     def run(self, app_instance: Any, config: RunConfig) -> None:
         """
-        Execute *app_instance* with the given *config*.
+        Execute an application instance with the given configuration.
 
         Args:
-            app_instance: The object returned by :meth:`build_apps`.
-            config:       Simulation/execution parameters.  Backend adapters
-                          may accept a subclass of :class:`RunConfig` that
-                          carries additional backend-specific fields.
+            app_instance: Object returned by :meth:`build_apps`.
+            config: Simulation or execution parameters. Backend adapters
+                may accept a subclass of :class:`RunConfig` with
+                additional backend-specific fields.
         """

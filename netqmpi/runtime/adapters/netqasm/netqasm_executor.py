@@ -1,14 +1,12 @@
 """
 NetQASM backend adapter.
 
-Implements the full :class:`~netqmpi.runtime.executor.Executor` contract for
-the NetQASM simulator:
+This module implements the full
+:class:`~netqmpi.runtime.executor.Executor` contract for the NetQASM
+simulator, including circuit creation, application construction, and
+simulation execution.
 
-- :meth:`create_circuit`  — Factory Method for NetQASM circuits.
-- :meth:`build_apps`       — loads a user script and wires up N rank processes.
-- :meth:`run`             — drives the NetQASM simulator.
-
-This is the only file in the NetQASM adapter layer that is allowed to import
+This is the only file in the NetQASM adapter layer allowed to import
 from ``netqasm.*``.
 """
 from __future__ import annotations
@@ -44,17 +42,15 @@ from netqmpi.helpers import load_main
 @dataclass
 class NetQASMRunConfig(RunConfig):
     """
-    :class:`~netqmpi.runtime.run_config.RunConfig` extended with fields
-    specific to the NetQASM simulator.
+    Extension of :class:`~netqmpi.runtime.run_config.RunConfig` with
+    NetQASM-specific simulation parameters.
 
     Attributes:
-        formalism:      Quantum state formalism (KET, DENSITY, STABILIZER, …).
-        network_config: NetQASM
-                        :class:`~netqasm.runtime.interface.config.NetworkConfig`
-                        describing the simulated network topology.  ``None``
-                        uses the default topology for the script directory.
-        log_cfg:        NetQASM :class:`~netqasm.sdk.config.LogConfig`
-                        controlling per-rank instruction logging.
+        formalism: Quantum state formalism to use in the simulation.
+        network_config: Network configuration describing the simulated
+            topology. If ``None``, the default topology is used.
+        log_cfg: NetQASM log configuration controlling per-rank
+            instruction logging.
     """
 
     formalism: Formalism = field(default_factory=lambda: Formalism.KET)
@@ -67,17 +63,18 @@ class NetQASMRunConfig(RunConfig):
 
 class NetQASMExecutorAdapter(Executor):
     """
-    :class:`~netqmpi.runtime.executor.Executor` implementation for the
-    NetQASM backend.
+    Executor implementation for the NetQASM backend.
 
-    Handles circuit creation, script loading, process wiring, and simulator
-    execution in a single cohesive adapter.
+    This adapter handles circuit creation, application construction, and
+    simulation execution for the NetQASM runtime.
     """
 
     def __init__(self, size: int, config: Dict[str, Any] = None) -> None:
         """
+        Initialize the NetQASM executor adapter.
+
         Args:
-            size:   Number of available NetQASM nodes.
+            size: Number of available NetQASM nodes.
             config: NetQASM-specific configuration dictionary.
         """
         super().__init__(size, config)
@@ -93,16 +90,16 @@ class NetQASMExecutorAdapter(Executor):
         comm: NetQASMCommunicator,
     ) -> Circuit:
         """
-        Factory Method: creates a :class:`~netqmpi.sdk.adapters.netqasm.NetQASMCircuitAdapter`.
+        Create a NetQASM circuit adapter.
 
         Args:
-            num_qubits:  Number of qubits in the circuit.
-            num_clbits:  Number of classical bits in the circuit.
-            environment: The :class:`~netqmpi.sdk.environment.Environment`
-                         to bind to the circuit.
+            num_qubits: Number of qubits in the circuit.
+            num_clbits: Number of classical bits in the circuit.
+            comm: Communicator bound to the circuit.
 
         Returns:
-            :class:`~netqmpi.sdk.adapters.netqasm.NetQASMCircuitAdapter` instance.
+            A :class:`~netqmpi.runtime.adapters.netqasm.NetQASMCircuitAdapter`
+            instance.
         """
         return NetQASMCircuitAdapter(num_qubits, num_clbits, comm=comm)
 
@@ -111,12 +108,21 @@ class NetQASMExecutorAdapter(Executor):
     # ------------------------------------------------------------------
 
     def _make_environment_injector(self, main_func, rank: int, size: int):
-        """Wrap *main_func* to inject a :class:`~netqmpi.sdk.core.environment.Environment`.
+        """
+        Wrap ``main_func`` to inject an :class:`Environment`.
 
-        The returned wrapper is called by the NetQASM runtime with ``app_config``
-        and builds both the :class:`~netqmpi.sdk.communicator.QMPICommunicator`
-        and the :class:`~netqmpi.sdk.core.environment.Environment` before
-        forwarding to the original function.
+        The returned wrapper is invoked by the NetQASM runtime with an
+        ``app_config`` object. It builds the corresponding
+        :class:`NetQASMCommunicator` and :class:`Environment`, then calls
+        the original function.
+
+        Args:
+            main_func: User entry-point function.
+            rank: Rank assigned to the wrapped program.
+            size: Total number of ranks.
+
+        Returns:
+            A wrapped callable compatible with the NetQASM runtime.
         """
         def wrapped_main(app_config=None):
             env = Environment(NetQASMCommunicator(rank, size, app_config), self)
@@ -132,24 +138,26 @@ class NetQASMExecutorAdapter(Executor):
         roles_cfg_file: str = "roles.yaml",
     ) -> ApplicationInstance:
         """
-        Load *file* and create a
-        :class:`~netqasm.runtime.application.ApplicationInstance` with
-        *num_processes* rank entries, each wrapping ``main`` with an injected
-        :class:`~netqmpi.sdk.environment.Environment` backed by *self*.
+        Load a script and build a NetQASM application instance.
+
+        The resulting application instance contains one program per rank,
+        each wrapping the user ``main`` function with an injected
+        :class:`~netqmpi.sdk.environment.Environment`.
 
         Args:
-            file:           Path to the NetQMPI ``.py`` script.
-            num_processes:  Number of parallel quantum nodes.
-            argv_file:      Optional YAML file with per-rank argument values.
+            file: Path to the NetQMPI Python script.
+            size: Number of parallel quantum nodes.
+            argv_file: Optional YAML file containing per-rank input
+                arguments.
             roles_cfg_file: Path to the roles configuration file.
 
         Returns:
-            :class:`~netqasm.runtime.application.ApplicationInstance` ready
-            to pass to :meth:`run`.
+            A :class:`~netqasm.runtime.application.ApplicationInstance`
+            ready to be passed to :meth:`run`.
 
         Raises:
-            ValueError: If *file* is ``None``, not a ``.py`` file, or has no
-                        ``main`` function.
+            ValueError: If ``file`` is ``None`` or does not point to a
+                Python file.
         """
         if file is None:
             raise ValueError("file must be provided")
@@ -188,13 +196,15 @@ class NetQASMExecutorAdapter(Executor):
 
     def run(self, app_instance: ApplicationInstance, config: RunConfig) -> None:
         """
-        Run *app_instance* through the NetQASM simulator.
+        Run an application instance through the NetQASM simulator.
 
         Args:
-            app_instance: Object returned by :meth:`build_apps`.
-            config:       Simulation parameters.  Pass a
-                          :class:`NetQASMRunConfig` to control NetQASM-specific
-                          options such as *formalism* or *log_cfg*.
+            app_instance: Application instance returned by
+                :meth:`build_apps`.
+            config: Simulation parameters. A
+                :class:`NetQASMRunConfig` can be provided to control
+                NetQASM-specific options such as ``formalism`` or
+                ``log_cfg``.
         """
         simulator = os.environ.get("NETQASM_SIMULATOR", Simulator.NETSQUID.value)
         set_simulator(simulator)

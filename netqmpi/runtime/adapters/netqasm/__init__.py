@@ -1,7 +1,8 @@
 """NetQASM runtime adapters for NetQMPI.
 
-Contains the NetQASM-specific :class:`Executor`, :class:`RunConfig`,
-and :class:`NetQASMCommunicator`.
+This package exposes the NetQASM-specific runtime adapter classes used by
+NetQMPI, including the communicator, circuit adapter, executor adapter,
+and run configuration.
 """
 from netqmpi.runtime.adapters.netqasm.netqasm_communicator import NetQASMCommunicator
 from netqmpi.runtime.adapters.netqasm.netqasm_circuit import NetQASMCircuitAdapter

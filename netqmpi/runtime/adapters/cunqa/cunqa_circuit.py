@@ -1,7 +1,7 @@
 """
-Circuit adapter for the Cunqa backend.
+Adapter for the CUNQA backend circuit.
 
-Implements the Circuit interface to work with Cunqa circuits.
+This module implements the ``Circuit`` interface for CUNQA circuits.
 """
 import os, sys
 sys.path.append(os.getenv("HOME"))
@@ -22,10 +22,10 @@ from netqmpi.runtime.adapters.cunqa.cunqa_communicator import CunqaCommunicator
 
 class CunqaCircuitAdapter(Circuit):
     """
-    Adapter that implements Circuit for the Cunqa backend.
-    
-    This adapter encapsulates a Cunqa circuit and provides
-    the common interface defined in the abstract Circuit class.
+    Circuit adapter for the CUNQA backend.
+
+    This class wraps a ``CunqaCircuit`` instance and exposes the common
+    interface defined by the abstract ``Circuit`` base class.
     """
     
     def __init__(
@@ -35,18 +35,24 @@ class CunqaCircuitAdapter(Circuit):
         comm: CunqaCommunicator
     ):
         """
-        Initialize the Cunqa circuit.
-        
+        Initialize the CUNQA circuit adapter.
+
         Args:
             num_qubits: Number of qubits in the circuit.
             num_clbits: Number of classical bits in the circuit.
+            comm: Communicator associated with the circuit.
         """
         super().__init__(num_qubits, num_clbits, comm)
         # TODO: Initialize the underlying Cunqa circuit
         self._cunqa_circuit = CunqaCircuit(num_qubits, num_clbits, id=f"rank_{self._comm.rank}")
     
     def _translate_gate(self, op: Gate):
-        """Translate a single unitary gate (H, X, RZ, …) into a CUNQA instruction."""
+        """
+        Translate a single-qubit unitary gate into a CUNQA instruction.
+
+        Args:
+            op: Gate operation to translate.
+        """
         
         gate_map = {
             # 1 qubit
@@ -69,7 +75,12 @@ class CunqaCircuitAdapter(Circuit):
             gate_map[op.name]()
 
     def _translate_controlled_gate(self, op: ControlledGate):
-        """Translate a qubit-controlled gate (e.g. CNOT, CZ) into CUNQA instructions."""
+        """
+        Translate a controlled quantum gate into a CUNQA instruction.
+
+        Args:
+            op: Controlled gate operation to translate.
+        """
         
         gate_2q = {
             # 2 qubits
@@ -86,49 +97,122 @@ class CunqaCircuitAdapter(Circuit):
             
 
     def _translate_classical_controlled_gate(self, op: ClassicalControlledGate):
-        """Translate a classically-controlled gate (conditioned on cbit values) into CUNQA instructions."""
+        """
+        Translate a classically controlled gate into a CUNQA instruction.
+
+        Args:
+            op: Classically controlled gate operation to translate.
+
+        Raises:
+            NotImplementedError: Always, because this operation is not yet supported.
+        """
         raise NotImplementedError("ClassicalControlledGate is not yet implemented for the CUNQA backend.")
 
     def _translate_measure(self, op: Measure):
-        """Translate a measurement into a CUNQA measure instruction."""
+        """
+        Translate a measurement operation into a CUNQA instruction.
+
+        Args:
+            op: Measurement operation to translate.
+        """
         self._cunqa_circuit.measure(op.qubits[0], op.cbit)
 
     def _translate_reset(self, op: Reset):
-        """Translate a qubit reset into a CUNQA init instruction."""
+        """
+        Translate a reset operation into a CUNQA instruction.
+
+        Args:
+            op: Reset operation to translate.
+        """
         self._cunqa_circuit.reset(op.qubits[0]) # TODO: Mirar si resetea con varios también
 
     def _translate_barrier(self, op: Barrier):
-        """Translate a barrier (no-op for CUNQA; used to prevent re-ordering)."""
+        """
+        Translate a barrier operation into a CUNQA instruction.
+
+        Args:
+            op: Barrier operation to translate.
+
+        Raises:
+            NotImplementedError: Always, because this operation is not yet supported.
+        """
         raise NotImplementedError("Barrier is not implemented for the CUNQA backend.")
 
     def _translate_operation_container(self, op: OperationContainer):
-        """Recursively translate a composite OperationContainer by flattening its children."""
+        """
+        Translate an operation container by recursively translating its children.
+
+        Args:
+            op: Operation container to translate.
+        """
         
         for child in op.flatten():
             self.translate(child)
 
     def _translate_qsend(self, op: QSend):
-        """Translate a QSend into the CUNQA teleportation-based send protocol."""
+        """
+        Translate a quantum send operation into a CUNQA instruction.
+
+        Args:
+            op: Quantum send operation to translate.
+        """
         self._cunqa_circuit.qsend(op.qubits[0], f"rank_{op.dest_rank}")
 
     def _translate_qrecv(self, op: QRecv):
-        """Translate a QRecv into the CUNQA teleportation-based receive protocol."""
+        """
+        Translate a quantum receive operation into a CUNQA instruction.
+
+        Args:
+            op: Quantum receive operation to translate.
+        """
         self._cunqa_circuit.qrecv(op.qubits[0], f"rank_{op.src_rank}")
 
     def _translate_qscatter(self, op: QScatter):
-        """Translate a QScatter into individual CUNQA send operations from the sender rank."""
+        """
+        Translate a quantum scatter operation into CUNQA instructions.
+
+        Args:
+            op: Quantum scatter operation to translate.
+
+        Raises:
+            NotImplementedError: Always, because this operation is not yet supported.
+        """
         raise NotImplementedError("QScatter is not yet implemented for the CUNQA backend.")
 
     def _translate_qgather(self, op: QGather):
-        """Translate a QGather into individual CUNQA receive operations at the receiver rank."""
+        """
+        Translate a quantum gather operation into CUNQA instructions.
+
+        Args:
+            op: Quantum gather operation to translate.
+
+        Raises:
+            NotImplementedError: Always, because this operation is not yet supported.
+        """
         raise NotImplementedError("QGather is not yet implemented for the CUNQA backend.")
 
     def _translate_expose(self, op: Expose):
-        """Translate an Expose into a CUNQA GHZ-based telegate exposure."""
+        """
+        Translate an expose operation into a CUNQA instruction.
+
+        Args:
+            op: Expose operation to translate.
+
+        Raises:
+            NotImplementedError: Always, because this operation is not yet supported.
+        """
         raise NotImplementedError("Expose is not yet implemented for the CUNQA backend.")
 
     def _translate_unexpose(self, op: Unexpose):
-        """Translate an Unexpose into the CUNQA GHZ measurement and classical corrections."""
+        """
+        Translate an unexpose operation into a CUNQA instruction.
+
+        Args:
+            op: Unexpose operation to translate.
+
+        Raises:
+            NotImplementedError: Always, because this operation is not yet supported.
+        """
         raise NotImplementedError("Unexpose is not yet implemented for the CUNQA backend.")
 
     # Dispatch table: maps each Operation type to its translation method.
@@ -141,6 +225,12 @@ class CunqaCircuitAdapter(Circuit):
         cls._DISPATCH = {}
 
     def _build_dispatch(self):
+        """
+        Build the dispatch table for operation translation.
+
+        Returns:
+            A mapping from operation types to translation methods.
+        """
         return {
             ClassicalControlledGate: self._translate_classical_controlled_gate,
             ControlledGate:          self._translate_controlled_gate,
@@ -159,14 +249,13 @@ class CunqaCircuitAdapter(Circuit):
 
     def translate(self, op: Operation) -> Any:
         """
-        Dispatches a generic Operation to the appropriate private translation method
-        via a type-keyed dispatch table.
+        Dispatch an operation to its corresponding translation method.
 
         Args:
-            op: The generic Operation to translate.
+            op: Operation to translate.
 
         Returns:
-            The corresponding CUNQA instruction(s).
+            The translated CUNQA instruction or instructions.
 
         Raises:
             TypeError: If the operation type is unknown.

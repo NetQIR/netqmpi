@@ -1,22 +1,24 @@
 """
-Circuit adapter for the NetQASM self — eager execution model.
+Circuit adapter for the NetQASM eager-execution model.
 
-NetQASM has no circuit object: every instruction is dispatched to the
-simulator the moment it is called on a :class:`netqasm.sdk.qubit.Qubit`.
-Therefore this adapter:
+NetQASM does not provide a circuit object: each instruction is dispatched
+to the simulator as soon as it is invoked on a
+:class:`netqasm.sdk.qubit.Qubit`. Therefore, this adapter:
 
-1. Allocates a :class:`Qubit` array in ``__init__`` using the live
-   ``connection`` obtained via ``environment.self._comm.connection``.
-2. Overrides every gate method of the base :class:`Circuit` so that each
-   one *first* delegates to ``super()`` (recording the operation in the
-   :class:`OperationContainer`) and *then* executes the corresponding
-   NetQASM SDK call on the qubit immediately.
+1. Allocates a :class:`Qubit` array in ``__init__`` using the active
+   connection exposed by ``self._comm``.
+2. Overrides the gate methods of the base :class:`Circuit` so that each
+   method first delegates to ``super()`` to record the operation in the
+   :class:`OperationContainer`, and then executes the corresponding
+   NetQASM SDK call immediately.
 3. Overrides the inter-rank communication primitives (``qsend``,
-   ``qrecv``, ``qscatter``, ``qgather``, ``expose``, ``unexpose``) with
-   the concrete teleportation / collective protocols from the NetQASM SDK.
-4. Keeps ``translate()`` as a no-op — execution has already happened.
-5. In ``build()`` flushes the connection and returns the qubit array
-   together with the classical results.
+   ``qrecv``, ``qscatter``, ``qgather``, ``expose``, and ``unexpose``)
+   with the concrete teleportation and collective protocols implemented
+   through the NetQASM SDK.
+4. Keeps ``translate()`` as a no-op, since execution has already taken
+   place eagerly.
+5. Flushes the connection in ``build()`` and returns the qubit array
+   together with the classical measurement results.
 """
 from __future__ import annotations
 import numpy as np
@@ -39,14 +41,13 @@ class NetQASMCircuitAdapter(Circuit):
     """
     Eager-execution circuit adapter for NetQASM.
 
-    ``environment`` must be an
-    :class:`~netqmpi.sdk.environment.Environment` whose ``self._comm``
-    exposes a ``connection`` of type
-    :class:`netqasm.sdk.external.NetQASMConnection`.
+    This adapter executes operations immediately on live NetQASM qubits
+    while still recording them through the base :class:`Circuit`
+    interface.
 
     Attributes:
-        _qubits  (List[Qubit]): Live NetQASM qubits allocated at construction.
-        _results (List[Any]):   Classical measurement results indexed by cbit.
+        _qubits: Live NetQASM qubits allocated at construction time.
+        _results: Classical measurement results indexed by classical bit.
     """
 
     if TYPE_CHECKING:
@@ -59,13 +60,12 @@ class NetQASMCircuitAdapter(Circuit):
         comm: NetQASMCommunicator,
     ) -> None:
         """
+        Initialize the NetQASM circuit adapter.
+
         Args:
-            num_qubits:  Number of qubits to allocate.
-            num_clbits:  Number of classical result slots.
-            environment: The owning
-                         :class:`~netqmpi.sdk.environment.Environment`.
-                         Its ``self._comm.connection`` is used to allocate
-                         :class:`Qubit` instances immediately.
+            num_qubits: Number of qubits to allocate.
+            num_clbits: Number of classical result slots.
+            comm: Communicator providing the active NetQASM connection.
         """
         super().__init__(num_qubits, num_clbits, comm)
         
@@ -84,11 +84,26 @@ class NetQASMCircuitAdapter(Circuit):
     # ------------------------------------------------------------------
 
     def translate(self, op: Operation) -> Any:
-        """No-op: every operation is executed eagerly in the gate overrides."""
+        """
+        Translate an operation.
+
+        Args:
+            op: Operation to translate.
+
+        Returns:
+            None, because operations are executed eagerly and no translation
+            step is required.
+        """
         return None
 
     def build(self) -> dict:
-        """Flush the connection and return qubits + classical results."""
+        """
+        Finalize the circuit execution and return the collected data.
+
+        Returns:
+            A dictionary containing the allocated qubits and the classical
+            measurement results.
+        """
         self._comm.flush()
         return {'qubits': self._qubits, 'results': self._results}
 
@@ -127,7 +142,15 @@ class NetQASMCircuitAdapter(Circuit):
         return self
 
     def k(self, qubit: int) -> NetQASMCircuitAdapter:
-        """K gate (NetQASM-specific, not in the base Circuit API)."""
+        """
+        Apply the NetQASM-specific K gate.
+
+        Args:
+            qubit: Index of the target qubit.
+
+        Returns:
+            The current circuit adapter instance.
+        """
         self._check_qubit(qubit)
         self._qubits[qubit].K()
         return self
@@ -185,7 +208,15 @@ class NetQASMCircuitAdapter(Circuit):
         return self
 
     def measure_all(self) -> NetQASMCircuitAdapter:
-        """Measure every qubit, executing eagerly on NetQASM."""
+        """
+        Measure every qubit eagerly on NetQASM.
+
+        Returns:
+            The current circuit adapter instance.
+
+        Raises:
+            ValueError: If there are fewer classical bits than qubits.
+        """
         if self._num_clbits < self._num_qubits:
             raise ValueError(
                 "Not enough classical bits to measure all qubits "
@@ -205,7 +236,16 @@ class NetQASMCircuitAdapter(Circuit):
     # ------------------------------------------------------------------
 
     def qsend(self, qubits: List[int], dest_rank: int) -> NetQASMCircuitAdapter:
-        """Send *qubits* to *dest_rank* using teleportation."""
+        """
+        Send qubits to another rank using teleportation.
+
+        Args:
+            qubits: Indices of the qubits to send.
+            dest_rank: Destination rank.
+
+        Returns:
+            The current circuit adapter instance.
+        """
         super().qsend(qubits, dest_rank)
 
         epr_socket = self._comm.get_epr_socket(self._comm.rank, dest_rank)
@@ -227,7 +267,16 @@ class NetQASMCircuitAdapter(Circuit):
         return self
 
     def qrecv(self, qubits: List[int], src_rank: int) -> NetQASMCircuitAdapter:
-        """Receive qubits from *src_rank* into local slots via teleportation."""
+        """
+        Receive qubits from another rank into local slots via teleportation.
+
+        Args:
+            qubits: Indices of the local qubit slots that will receive the qubits.
+            src_rank: Source rank.
+
+        Returns:
+            The current circuit adapter instance.
+        """
         super().qrecv(qubits, src_rank)
         
         epr_socket = self._comm.get_epr_socket(self._comm.rank, src_rank)
@@ -262,7 +311,16 @@ class NetQASMCircuitAdapter(Circuit):
 
     @staticmethod
     def _list_split(lst: list, n: int) -> List[list]:
-        """Split *lst* into *n* chunks as evenly as possible."""
+        """
+        Split a list into ``n`` chunks as evenly as possible.
+
+        Args:
+            lst: List to split.
+            n: Number of chunks.
+
+        Returns:
+            A list containing the generated chunks.
+        """
         avg = len(lst) // n
         rem = len(lst) % n
         chunks: List[list] = []
@@ -274,7 +332,16 @@ class NetQASMCircuitAdapter(Circuit):
         return chunks
 
     def qscatter(self, qubits: List[int], sender_rank: int) -> NetQASMCircuitAdapter:
-        """Scatter *qubits* from *sender_rank* to all ranks."""
+        """
+        Scatter qubits from one rank to all ranks.
+
+        Args:
+            qubits: Qubits involved in the scatter operation.
+            sender_rank: Rank acting as the sender.
+
+        Returns:
+            The current circuit adapter instance.
+        """
         super().qscatter(qubits, sender_rank)
 
         rank = self._comm.rank
@@ -291,7 +358,16 @@ class NetQASMCircuitAdapter(Circuit):
         return self
 
     def qgather(self, qubits: List[int], recv_rank: int) -> NetQASMCircuitAdapter:
-        """Gather each rank's *qubits* into *recv_rank*."""
+        """
+        Gather qubits from all ranks into a receiver rank.
+
+        Args:
+            qubits: Qubits involved in the gather operation.
+            recv_rank: Rank that receives the gathered qubits.
+
+        Returns:
+            The current circuit adapter instance.
+        """
         super().qgather(qubits, recv_rank)
 
         self._comm = self._comm
@@ -313,17 +389,28 @@ class NetQASMCircuitAdapter(Circuit):
 
     def expose(self, qubits: List[int], rank: int = 0) -> _NetQASMExposeContext:
         """
-        Expose *qubits* via a GHZ-based telegate protocol.
+        Expose qubits through a GHZ-based telegate protocol.
 
-        Returns a context manager; the matching ``unexpose`` runs
-        automatically when the ``with`` block exits.
+        Args:
+            qubits: Indices of the qubits to expose.
+            rank: Rank that acts as the exposer.
+
+        Returns:
+            A context manager that automatically performs the matching
+            unexpose operation when leaving the ``with`` block.
         """
         for q in qubits:
             self._check_qubit(q)
         return _NetQASMExposeContext(self, qubits, rank)
 
     def _do_expose(self, qubits: List[int], rank: int) -> None:
-        """Execute the expose protocol eagerly (called by the context manager)."""
+        """
+        Execute the expose protocol eagerly.
+
+        Args:
+            qubits: Indices of the qubits to expose.
+            rank: Rank acting as the exposer.
+        """
         # Record the operation in the container
         self._ops.add(Expose(qubits, rank))
         
@@ -352,7 +439,12 @@ class NetQASMCircuitAdapter(Circuit):
             self._qubits[qubits[0]] = self.ghz_qubit  # type: ignore[assignment]
 
     def _do_unexpose(self, rank: int) -> None:
-        """Execute the unexpose protocol eagerly (called by the context manager)."""
+        """
+        Execute the unexpose protocol eagerly.
+
+        Args:
+            rank: Rank acting as the exposer.
+        """
         self._ops.add(Unexpose(rank))
 
         self.qubits_exposed.clear()
@@ -382,7 +474,12 @@ class NetQASMCircuitAdapter(Circuit):
     # ------------------------------------------------------------------
 
     def create_ghz(self) -> Qubit:
-        """Create a GHZ state across all ranks and return the local qubit."""
+        """
+        Create a GHZ state across all ranks.
+
+        Returns:
+            The local qubit belonging to the distributed GHZ state.
+        """
         my_eprs = self._epr_sockets[self._comm.get_rank_name(self._rank)]
         next_epr: Optional[EPRSocket] = None
         prev_epr: Optional[EPRSocket] = None
@@ -412,22 +509,49 @@ class NetQASMCircuitAdapter(Circuit):
 # ---------------------------------------------------------------------------
 
 class _NetQASMExposeContext(_ExposeContext):
-    """Context manager that runs the NetQASM expose/unexpose protocol eagerly.
+    """
+    Context manager for the NetQASM expose/unexpose protocol.
 
-    Inherits from :class:`_ExposeContext` so the return type is compatible
-    with the base :meth:`Circuit.expose` signature.
+    This class inherits from :class:`_ExposeContext` so that its return
+    type remains compatible with the base :meth:`Circuit.expose`
+    signature.
     """
 
     def __init__(self, circuit: NetQASMCircuitAdapter, qubits: List[int], rank: int) -> None:
+        """
+        Initialize the expose context manager.
+
+        Args:
+            circuit: Circuit adapter that executes the expose protocol.
+            qubits: Indices of the qubits to expose.
+            rank: Rank acting as the exposer.
+        """
         # Skip _ExposeContext.__init__ — we override __enter__/__exit__ entirely
         self._circuit = circuit
         self._qubits = qubits
         self._rank = rank
 
     def __enter__(self) -> NetQASMCircuitAdapter:
+        """
+        Enter the expose context.
+
+        Returns:
+            The circuit adapter after executing the expose protocol.
+        """
         self._circuit._do_expose(self._qubits, self._rank)
         return self._circuit
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+        """
+        Exit the expose context and execute the unexpose protocol.
+
+        Args:
+            exc_type: Exception type, if one was raised.
+            exc_val: Exception instance, if one was raised.
+            exc_tb: Traceback, if one was raised.
+
+        Returns:
+            ``False`` so that exceptions, if any, are not suppressed.
+        """
         self._circuit._do_unexpose(self._rank)
         return False

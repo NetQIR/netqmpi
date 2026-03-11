@@ -1,12 +1,13 @@
 """
-Environment – the object injected into every user ``main()`` function.
+Environment object injected into every user ``main()`` function.
 
-Acts as the bridge between the RUNTIME layer (which sets up the N-process
-execution environment and chooses the backend) and the SDK layer (which
-provides the user-facing programming API).
+This class acts as the bridge between the runtime layer, which sets up
+the multi-process execution environment and selects the backend, and the
+SDK layer, which provides the user-facing programming API.
 
-By depending only on this class, user application files remain completely
-backend-agnostic: they never import a concrete executor or backend adapter.
+By depending only on this class, user applications remain fully
+backend-agnostic and do not need to import any concrete executor or
+backend adapter.
 """
 from __future__ import annotations
 
@@ -23,36 +24,39 @@ class Environment:
     """
     Runtime context injected into every user ``main()`` function.
 
-    Encapsulates two responsibilities:
+    This class encapsulates two responsibilities:
 
-    * **Communication** – exposes the
-      :class:`~netqmpi.sdk.communicator.QMPICommunicator` for this rank via
-      the :attr:`comm` property.
-    * **Circuit creation** – exposes :meth:`create_circuit`, a factory method
-      that delegates to the backend
-      :class:`~netqmpi.runtime.executor.Executor` chosen by the runtime, so
-      that user code never has to reference a backend-specific class.
+    - Communication, through the
+      :class:`~netqmpi.sdk.communicator.QMPICommunicator` exposed by the
+      :attr:`comm` property.
+    - Circuit creation, through :meth:`create_circuit`, which delegates
+      to the backend-specific
+      :class:`~netqmpi.runtime.executor.Executor` selected by the
+      runtime.
 
-    Example usage inside a user application::
-
+    Example:
         def main(env: Environment = None):
-            rank = env.comm.get_rank()
+            rank = env.comm.rank
             circuit = env.create_circuit(num_qubits=2, num_clbits=1)
 
             with env.comm:
                 ...
 
     Args:
-        comm: The :class:`~netqmpi.sdk.communicator.QMPICommunicator` for
-              this rank, created by the runtime.
-        executor: Any object that implements
-                  ``create_circuit(num_qubits, num_clbits)``.  In practice
-                  this will be a concrete
-                  :class:`~netqmpi.runtime.executor.Executor` subclass
-                  instantiated by the runtime.
+        comm: Communicator associated with this rank.
+        executor: Executor responsible for creating backend-specific
+            circuit instances.
     """
 
     def __init__(self, comm: QMPICommunicator, executor: Executor) -> None:
+        """
+        Initialize the environment.
+
+        Args:
+            comm: Communicator associated with this rank.
+            executor: Executor responsible for creating backend-specific
+                circuit instances.
+        """
         self._comm = comm
         self._executor = executor
 
@@ -62,16 +66,21 @@ class Environment:
 
     @property
     def comm(self) -> QMPICommunicator:
-        """The :class:`~netqmpi.sdk.communicator.QMPICommunicator` for this rank."""
+        """
+        Return the communicator associated with this rank.
+
+        Returns:
+            The rank communicator.
+        """
         return self._comm
 
     def create_circuit(self, num_qubits: int, num_clbits: int) -> Circuit:
         """
-        Factory Method – creates a backend-specific quantum circuit.
+        Create a backend-specific quantum circuit.
 
-        Delegates to the underlying
-        :class:`~netqmpi.runtime.executor.Executor` so that user code
-        remains backend-agnostic.
+        This method delegates circuit creation to the underlying
+        :class:`~netqmpi.runtime.executor.Executor`, allowing user code
+        to remain backend-agnostic.
 
         Args:
             num_qubits: Number of qubits in the circuit.

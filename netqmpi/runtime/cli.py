@@ -1,10 +1,10 @@
 """
 NetQMPI command-line entry point.
 
-This module is intentionally free of any backend-specific imports
-(``netqasm``, ``cunqa``, ...).  All simulator logic is delegated to an
-:class:`~netqmpi.runtime.executor.Executor` implementation that lives
-in the corresponding adapter package.
+This module is intentionally free of backend-specific imports from the
+core runtime logic. All simulator-specific behavior is delegated to an
+:class:`~netqmpi.runtime.executor.Executor` implementation provided by
+the corresponding adapter package.
 """
 
 import time, argparse
@@ -23,17 +23,17 @@ def simulate(
     timer: bool = False,
 ) -> None:
     """
-    Build and run a NetQMPI script using the given backend *executor*.
+    Build and run a NetQMPI script using the given backend executor.
 
     Args:
-        script:    Path to the NetQMPI Python script.
+        script: Path to the NetQMPI Python script.
         num_procs: Number of parallel quantum nodes.
-        executor:  Backend executor.  Defaults to
-                   :class:`~netqmpi.runtime.adapters.netqasm.NetQASMExecutorAdapter`
-                   when ``None``.
-        config:    Simulation parameters.  Defaults to :class:`RunConfig`
-                   (all default values) when ``None``.
-        timer:     If ``True``, prints the wall-clock time of the run.
+        executor: Backend executor to use. If ``None``, a
+            :class:`~netqmpi.runtime.adapters.netqasm.NetQASMExecutorAdapter`
+            is used by default.
+        config: Simulation parameters. If ``None``, a default
+            :class:`RunConfig` instance is used.
+        timer: If ``True``, print the wall-clock execution time.
     """
     if executor is None:
         executor = NetQASMExecutorAdapter(size=num_procs)
@@ -51,6 +51,12 @@ def simulate(
         print(f"finished simulation in {round(time.perf_counter() - start, 2)} seconds")
 
 def main():
+    """
+    Parse command-line arguments and execute the requested NetQMPI script.
+
+    The selected backend adapter is instantiated from the provided flags
+    and passed to :func:`simulate`.
+    """
     
     parser = argparse.ArgumentParser(description="Run a NetQMPI Python code.")
     
