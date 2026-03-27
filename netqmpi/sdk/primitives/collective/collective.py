@@ -163,7 +163,8 @@ class CollectiveCommTelegate(CollectiveCommTeledata):
             bit = int(measure)
 
             # If bit is 1, apply an X gate to the GHZ qubit
-            bit and communicator.ghz_qubit.X()
+            if bit:
+                communicator.ghz_qubit.X()
             qubits.insert(0, communicator.ghz_qubit)
 
     @staticmethod
@@ -186,7 +187,8 @@ class CollectiveCommTelegate(CollectiveCommTeledata):
                     communicator.connection.flush()
 
             # Compute AND of all bits
-            np.bitwise_and.reduce(bits) and communicator.ghz_qubit.Z()
+            if np.bitwise_and.reduce(bits):
+                communicator.ghz_qubit.Z()
 
         else:
             # Apply Hadamard gate to the GHZ qubit
