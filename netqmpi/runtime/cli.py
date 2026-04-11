@@ -11,8 +11,8 @@ import time, argparse
 from typing import Optional
 
 from netqmpi.runtime import Executor
-from netqmpi.runtime.adapters.cunqa import CunqaExecutorAdapter
-from netqmpi.runtime.adapters.netqasm import NetQASMExecutorAdapter
+from netqmpi.runtime.adapters.cunqa import CunqaExecutorAdapter, CunqaRunConfig
+from netqmpi.runtime.adapters.netqasm import NetQASMExecutorAdapter, NetQASMRunConfig
 from netqmpi.runtime.run_config import RunConfig
 
 def simulate(
@@ -38,14 +38,11 @@ def simulate(
     if executor is None:
         executor = NetQASMExecutorAdapter(size=num_procs)
 
-    if config is None:
-        config = RunConfig()
-
     if timer:
         start = time.perf_counter()
 
     apps_instance = executor.build_apps(script, size=num_procs)
-    executor.run(apps_instance, config)
+    executor.run(apps_instance)
 
     if timer:
         print(f"finished simulation in {round(time.perf_counter() - start, 2)} seconds")
@@ -61,7 +58,7 @@ def main():
     parser = argparse.ArgumentParser(description="Run a NetQMPI Python code.")
     
     parser.add_argument(
-        "-np", "--num-procs", 
+        "-n", "--num-procs", 
         type=int, 
         required=True,
         help="Number of parallel processes"
@@ -73,6 +70,12 @@ def main():
     backend_group.add_argument("--netqasm", action="store_true", help="Use NetQASM backend")
     backend_group.add_argument("--cunqa", action="store_true", help="Use CunQA backend")
 
+    parser.add_argument(
+        "--shots", 
+        type=int, 
+        help="Number of shots"
+    )
+
     # TODO: Turn ON and OFF the timer
     # TODO: Get specific configurations
 
@@ -82,9 +85,11 @@ def main():
         parser.error("Number of processes must be at least 1")
     
     if args.netqasm:
-        executor = NetQASMExecutorAdapter(args.num_procs)
+        config = NetQASMRunConfig(shots=(args.shots or 1))
+        executor = NetQASMExecutorAdapter(args.num_procs, config=config)
     elif args.cunqa:
-        executor = CunqaExecutorAdapter(args.num_procs)
+        config = CunqaRunConfig(shots=(args.shots or 1024))
+        executor = CunqaExecutorAdapter(args.num_procs, config=config)
     else:
         print("No backend flag; using default (NetQASM)")
         executor = NetQASMExecutorAdapter(args.num_procs)    

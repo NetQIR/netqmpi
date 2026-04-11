@@ -11,26 +11,16 @@ from ``netqasm.*``.
 """
 from __future__ import annotations
 
-import importlib
-import os
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional, Callable
 
-from netqasm.runtime import env as netqasm_env
-from netqasm.runtime.application import (
-    Application, ApplicationInstance, Program, network_cfg_from_path,
-)
-from netqasm.runtime.interface.config import NetworkConfig
-from netqasm.runtime.process_logs import create_app_instr_logs, make_last_log
-from netqasm.runtime.settings import Formalism, Simulator, set_simulator
-from netqasm.sdk.config import LogConfig
+from netqasm.runtime.app_config import AppConfig
 from netqasm.util.yaml import load_yaml
+from netqasm.runtime.settings import Formalism
 
 from netqmpi.runtime.executor import Executor
 from netqmpi.runtime.run_config import RunConfig
 from netqmpi.runtime.adapters.netqasm import NetQASMCommunicator, NetQASMCircuitAdapter
-
-from netqmpi.sdk import QMPICommunicator
 from netqmpi.sdk.circuit import Circuit
 from netqmpi.sdk.environment import Environment
 from netqmpi.helpers import load_main
@@ -54,8 +44,13 @@ class NetQASMRunConfig(RunConfig):
     """
 
     formalism: Formalism = field(default_factory=lambda: Formalism.KET)
-    network_config: Optional[NetworkConfig] = None
-    log_cfg: Optional[LogConfig] = None
+    enable_logging: bool = True
+    hardware: str = "generic"
+    post_function: Optional[Callable] = None
+    network_config: Optional[Any] = None
+    log_cfg: Optional[Any] = None
+    argv = None
+    roles: str = "roles.yaml"
 
 # ---------------------------------------------------------------------------
 # Concrete Executor
@@ -69,15 +64,16 @@ class NetQASMExecutorAdapter(Executor):
     simulation execution for the NetQASM runtime.
     """
 
-    def __init__(self, size: int, config: Dict[str, Any] = None) -> None:
+    def __init__(self, size: int, config: NetQASMRunConfig = None) -> None:
         """
         Initialize the NetQASM executor adapter.
 
         Args:
             size: Number of available NetQASM nodes.
-            config: NetQASM-specific configuration dictionary.
+            self._config: NetQASM-specific configuration dictionary.
         """
-        super().__init__(size, config)
+        
+        super().__init__(size, config or NetQASMRunConfig())
 
     # ------------------------------------------------------------------
     # Executor interface — circuit factory
@@ -124,28 +120,22 @@ class NetQASMExecutorAdapter(Executor):
         Returns:
             A wrapped callable compatible with the NetQASM runtime.
         """
-        def wrapped_main(app_config=None):
-            env = Environment(NetQASMCommunicator(rank, size, app_config), self)
+        def wrapped_main():
+            env = Environment(NetQASMCommunicator(rank, size, self._config), self)
             main_func(env=env)
             
         return wrapped_main
 
-    def build_apps(
-        self,
-        file: str,
-        size: int,
-        argv_file: Optional[str] = None,
-        roles_cfg_file: str = "roles.yaml",
-    ) -> ApplicationInstance:
+    def build_apps(self, file: str, size: int) -> Any:
         """
-        Load a script and build a NetQASM application instance.
+        Load a file and build a NetQASM application instance.
 
         The resulting application instance contains one program per rank,
         each wrapping the user ``main`` function with an injected
         :class:`~netqmpi.sdk.environment.Environment`.
 
         Args:
-            file: Path to the NetQMPI Python script.
+            file: Path to the NetQMPI Python file.
             size: Number of parallel quantum nodes.
             argv_file: Optional YAML file containing per-rank input
                 arguments.
@@ -164,72 +154,27 @@ class NetQASMExecutorAdapter(Executor):
         if not file.endswith(".py"):
             raise ValueError("file must be a .py file")
 
-        argv: dict = load_yaml(argv_file) if argv_file is not None else {}
+        argv: dict = load_yaml(self._config.argv) if self._config.argv is not None else {}
         main_func = load_main(file)
 
-        programs: list = []
-        argv_per_rank: dict = {}
-
+        apps = []
         for rank in range(size):
-            rank_name = f"rank_{rank}"
-            
             wrapped_main = self._make_environment_injector(main_func, rank, size)
-            programs.append(Program(party=rank_name, entry=wrapped_main, args=[], results=[]))
-            argv_per_rank[rank_name] = argv.copy()
-
-        roles = netqasm_env.load_roles_config(roles_cfg_file)
-        if roles is None:
-            roles = {prog.party: prog.party for prog in programs}
-
-        app = Application(programs=programs, metadata=None)
-        return ApplicationInstance(
-            app=app,
-            program_inputs=argv_per_rank,
-            network=None,
-            party_alloc=roles,
-            logging_cfg=None,
-        )
-
+            apps.append(wrapped_main)        
+    
+        return apps
+    
     # ------------------------------------------------------------------
     # Executor interface — application runner
     # ------------------------------------------------------------------
 
-    def run(self, app_instance: ApplicationInstance, config: RunConfig) -> None:
+    def run(self, apps: Any) -> None:
         """
         Run an application instance through the NetQASM simulator.
 
         Args:
             app_instance: Application instance returned by
                 :meth:`build_apps`.
-            config: Simulation parameters. A
-                :class:`NetQASMRunConfig` can be provided to control
-                NetQASM-specific options such as ``formalism`` or
-                ``log_cfg``.
         """
-        simulator = os.environ.get("NETQASM_SIMULATOR", Simulator.NETSQUID.value)
-        set_simulator(simulator)
-
-        simulate_application = importlib.import_module("netqasm.sdk.external").simulate_application
-
-        formalism = getattr(config, "formalism", Formalism.KET)
-        log_cfg = config.log_cfg
-        network_config = config.network_config
-
-        if network_config is not None:
-            network_config = network_cfg_from_path(".", network_config)
-
-        simulate_application(
-            app_instance=app_instance,
-            num_rounds=config.num_rounds,
-            network_cfg=network_config,
-            formalism=formalism,
-            post_function=config.post_function,
-            log_cfg=log_cfg,
-            use_app_config=config.use_app_config,
-            enable_logging=config.enable_logging,
-            hardware=config.hardware,
-        )
-
-        if config.enable_logging and log_cfg is not None:
-            create_app_instr_logs(log_cfg.log_subroutines_dir)
-            make_last_log(log_cfg.log_subroutines_dir)
+        for app in apps:
+            app()

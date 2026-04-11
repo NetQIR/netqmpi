@@ -9,11 +9,23 @@ connections, EPR sockets, and classical sockets.
 """
 from __future__ import annotations
 
-from typing import Any, List, Dict 
+import os
+import importlib
+from typing import Any, List, Dict, TYPE_CHECKING
 
 from netqasm.sdk import EPRSocket, Qubit
 from netqasm.sdk.external import NetQASMConnection, Socket
+from netqasm.runtime.app_config import AppConfig
+from netqasm.runtime import env as netqasm_env
+from netqasm.runtime.application import (
+    Application, ApplicationInstance, Program, network_cfg_from_path,
+)
+from netqasm.runtime.process_logs import create_app_instr_logs, make_last_log
+from netqasm.runtime.settings import Formalism, Simulator, set_simulator
 
+if TYPE_CHECKING:
+    from netqmpi.runtime.adapters.netqasm.netqasm_executor import NetQASMRunConfig
+    
 from netqmpi.sdk import QMPICommunicator
 
 class NetQASMCommunicator(QMPICommunicator):
@@ -27,20 +39,21 @@ class NetQASMCommunicator(QMPICommunicator):
     Args:
         rank: Numeric index of the current rank.
         size: Total number of ranks in the communicator.
-        app_config: NetQASM application configuration associated with this rank.
+        _config: NetQASM application configuration associated with this rank.
     """
+    
+    netqasm_circuits = []
 
-    def __init__(self, rank: int, size: int, app_config: Any) -> None:
+    def __init__(self, rank: int, size: int, config: NetQASMRunConfig) -> None:
         """
         Initialize the NetQASM communicator.
 
         Args:
             rank: Numeric index of the current rank.
             size: Total number of ranks in the communicator.
-            app_config: NetQASM application configuration associated with this rank.
+            _config: NetQASM application configuration associated with this rank.
         """
         super().__init__(rank, size)
-        self._app_config = app_config
 
         # -- EPR sockets ---------------------------------------------------
         self._epr_sockets: Dict[str, Dict[str, EPRSocket]] = {}
@@ -62,14 +75,10 @@ class NetQASMCommunicator(QMPICommunicator):
         self._sockets: Dict[str, Dict[str, Socket]] = {}
         for i in range(self.size):
             self._sockets[self.get_rank_name(i)] = {}
-
         
-        # -- NetQASM connection ---------------------------------------------
-        self._connection = NetQASMConnection(
-            app_name=app_config.app_name,
-            log_config=app_config.log_config,
-            epr_sockets=self._epr_sockets_list,
-        )
+        self._connection = None
+        
+        self._config = config
 
     # ------------------------------------------------------------------
     # Context manager
@@ -102,7 +111,6 @@ class NetQASMCommunicator(QMPICommunicator):
         Returns:
             The current communicator instance.
         """
-        self._connection.__enter__()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> Any:
@@ -117,7 +125,72 @@ class NetQASMCommunicator(QMPICommunicator):
         Returns:
             The result of the underlying connection ``__exit__`` method.
         """
-        return self._connection.__exit__(exc_type, exc_val, exc_tb)
+        
+        argv_per_rank: dict = {}
+        
+        for circuit in self.circuits:
+            def entry(app_config=None):
+                self._connection = NetQASMConnection(
+                    app_name=app_config.app_name,
+                    log_config=app_config.log_config, # TODO: Change none
+                    epr_sockets=self._epr_sockets_list,
+                )
+                self._connection.__enter__()
+                for op in circuit.translate(circuit.ops):
+                    result = op()
+                    if result is not None:
+                        self.flush()
+                        str_result = str(result)
+                        self.results[str_result] = self.results.get(str_result, 0) + 1
+                self._connection.__exit__(exc_type, exc_val, exc_tb)
+
+            print(f"rank_{self.rank}")
+            NetQASMCommunicator.netqasm_circuits.append(
+                Program(party=f"rank_{self.rank}", entry=entry, args=[], results=[])
+            )
+
+        if len(NetQASMCommunicator.netqasm_circuits) == self.size:
+            roles = netqasm_env.load_roles_config(self._config.roles)
+            if roles is None:
+                roles = {prog.party: prog.party for prog in NetQASMCommunicator.netqasm_circuits}
+
+            app_instance = ApplicationInstance(
+                app=Application(programs=NetQASMCommunicator.netqasm_circuits, metadata=None),
+                program_inputs=argv_per_rank,
+                network=None,
+                party_alloc=roles,
+                logging_cfg=None,
+            )
+            
+            simulator = os.environ.get("NETQASM_SIMULATOR", Simulator.NETSQUID.value)
+            set_simulator(simulator)
+
+            simulate_application = importlib.import_module("netqasm.sdk.external").simulate_application
+
+            formalism = getattr(self._config, "formalism", Formalism.KET)
+            log_cfg = self._config.log_cfg
+            network_config = self._config.network_config
+
+            if network_config is not None:
+                network_config = network_cfg_from_path(".", network_config)
+
+            simulate_application(
+                app_instance=app_instance,
+                num_rounds=1,
+                network_cfg=network_config,
+                formalism=formalism,
+                post_function=self._config.post_function,
+                log_cfg=log_cfg,
+                use_app_config=True,
+                enable_logging=self._config.enable_logging,
+                hardware=self._config.hardware,
+            )
+
+            if self._config.enable_logging and log_cfg is not None:
+                create_app_instr_logs(log_cfg.log_subroutines_dir)
+                make_last_log(log_cfg.log_subroutines_dir)
+                    
+        return None
 
 
     def get_socket(self, my_rank: int, other_rank: int) -> Socket:
@@ -194,3 +267,5 @@ class NetQASMCommunicator(QMPICommunicator):
             The active NetQASM connection.
         """
         return self._connection
+    
+    

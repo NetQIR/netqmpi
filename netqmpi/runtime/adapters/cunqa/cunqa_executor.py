@@ -7,16 +7,36 @@ running applications with the CUNQA backend.
 import os, sys
 sys.path.append(os.getenv("HOME"))
 
-from typing import Dict, Any, List, Optional, TYPE_CHECKING
+from typing import Dict, Any
+from dataclasses import dataclass
 
-from cunqa.qpu import qraise, get_QPUs, run, qdrop
-from cunqa.qjob import gather
+from cunqa.qpu import qraise, get_QPUs, qdrop
 
 from netqmpi.runtime.executor import Executor
 from netqmpi.sdk.environment import Environment
 from netqmpi.runtime.adapters.cunqa.cunqa_circuit import CunqaCircuitAdapter
 from netqmpi.runtime.adapters.cunqa.cunqa_communicator import CunqaCommunicator
+from netqmpi.runtime.run_config import RunConfig
 from netqmpi.helpers import load_main  
+
+
+@dataclass
+class CunqaRunConfig(RunConfig):
+    """
+    Extension of :class:`~netqmpi.runtime.run_config.RunConfig` with
+    NetQASM-specific simulation parameters.
+
+    Attributes:
+        formalism: Quantum state formalism to use in the simulation.
+        network_config: Network configuration describing the simulated
+            topology. If ``None``, the default topology is used.
+        log_cfg: NetQASM log configuration controlling per-rank
+            instruction logging.
+    """
+
+    simulator: str = "Aer"
+    time: str = "00:10:00"
+    
 
 class CunqaExecutorAdapter(Executor):
     """
@@ -26,7 +46,7 @@ class CunqaExecutorAdapter(Executor):
     common interface defined by :class:`Executor`.
     """
     
-    def __init__(self, size: int, config: Dict[str, Any] = None):
+    def __init__(self, size: int, config: CunqaRunConfig = None):
         """
         Initialize the CUNQA executor adapter.
 
@@ -34,8 +54,8 @@ class CunqaExecutorAdapter(Executor):
             size: Number of available CUNQA nodes.
             config: Backend-specific configuration parameters.
         """
-        super().__init__(size, config)
-        self._circuits = []
+        super().__init__(size, config or CunqaRunConfig())
+        self._family: str = None
     
     def create_circuit(
         self, 
@@ -55,32 +75,36 @@ class CunqaExecutorAdapter(Executor):
         Returns:
             A ``CunqaCircuitAdapter`` instance.
         """
-        circuit = CunqaCircuitAdapter(num_qubits, num_clbits, comm)
-        self._circuits.append(circuit)
-        return circuit
+        return CunqaCircuitAdapter(num_qubits, num_clbits, comm)
 
-    def build_apps(self, script: str, size: int) -> Any:
+    def build_apps(self, file: str, size: int) -> Any:
         """
-        Build one application wrapper per rank from the provided script.
+        Build one application wrapper per rank from the provided file.
 
         Args:
-            script: Path to the script containing the main entry point.
+            file: Path to the file containing the main entry point.
             size: Number of ranks to instantiate.
 
         Returns:
             A collection of wrapped application callables, one per rank.
         """
-        main_func = load_main(script)
+        main_func = load_main(file)
+
+        try:
+            self._family = qraise(size, "00:10:00", simulator="Aer", co_located=True, quantum_comm=True)
+            qpus  = get_QPUs(co_located = True, family = self._family)
+        except Exception as error:
+            raise error
 
         apps = []
-        for rank in range(size):
-            env = Environment(CunqaCommunicator(rank, size), self)
+        for rank, qpu in enumerate(qpus):
+            env = Environment(CunqaCommunicator(rank, size, qpu, self._config), self)
             wrapped_main = lambda env=env: main_func(env=env)
             apps.append(wrapped_main)
         
         return apps
         
-    def run(self, apps: Any, configuration: Any) -> None:
+    def run(self, apps: Any) -> None:
         """
         Execute the provided applications on the CUNQA backend.
 
@@ -101,24 +125,5 @@ class CunqaExecutorAdapter(Executor):
         """
         for app in apps:
             app()
-
-        try:
-            family = qraise(2, "00:10:00", simulator="Aer", co_located=True, quantum_comm=True)
-        except Exception as error:
-            raise error
-
-        try:
-            qpus  = get_QPUs(co_located = True, family = family)
             
-            for circuit in self._circuits:
-                circuit.translate(circuit.ops)
-                print(circuit._cunqa_circuit.instructions)
-            qjobs = run([circuit._cunqa_circuit for circuit in self._circuits], qpus, shots = 1024) # non-blocking call
-            results = gather(qjobs)
-            for result in results:
-                print(result)
-            qdrop(family)
-            return results
-        except Exception as error:
-            qdrop(family)
-            raise error
+        qdrop(self._family)

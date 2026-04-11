@@ -22,16 +22,23 @@ to the simulator as soon as it is invoked on a
 """
 from __future__ import annotations
 import numpy as np
-from typing import TYPE_CHECKING, Any, List, Optional, Dict
+from typing import TYPE_CHECKING, Any, List, Optional
 
-from netqasm.sdk.classical_communication.message import StructuredMessage
 from netqasm.sdk import EPRSocket, Qubit
 from netqasm.sdk.external import Socket
 from netqasm.sdk.toolbox import create_ghz
+from netqasm.sdk.classical_communication.message import StructuredMessage
 
-from netqmpi.sdk.circuit import Circuit, _ExposeContext
-from netqmpi.sdk.operations.operation import Operation
-from netqmpi.sdk.operations.qmpi import Expose, Unexpose
+from netqmpi.sdk.circuit import Circuit
+
+from netqmpi.sdk.operations import (
+    Operation,
+    Gate, ControlledGate, ClassicalControlledGate,
+    Measure, Reset, Barrier,
+    OperationContainer,
+    QSend, QRecv, QScatter, QGather, Expose, Unexpose,
+)
+
 
 if TYPE_CHECKING:
     from netqmpi.runtime.adapters.netqasm import NetQASMCommunicator
@@ -69,10 +76,9 @@ class NetQASMCircuitAdapter(Circuit):
         """
         super().__init__(num_qubits, num_clbits, comm)
         
-        self._qubits: List[Qubit] = [
-            self._comm.create_qubit() for _ in range(num_qubits)
-        ]
+        self._qubits: List[Qubit] = []
         
+        self._translated_ops: List[Any] = []
         self._results: List[Any] = [None] * num_clbits
 
         # -- Expose / GHZ bookkeeping (used by the circuit adapter) ---------
@@ -83,392 +89,269 @@ class NetQASMCircuitAdapter(Circuit):
     # Circuit abstract interface
     # ------------------------------------------------------------------
 
+    def _gate_not_implemented(self, name: str):
+        def throw_exception():
+            raise NotImplementedError(f"{name} is not yet implemented for the CUNQA backend.")
+        
+        return throw_exception
+        
+
+    def _translate_gate(self, op: Gate):
+        """
+        Translate a single-qubit unitary gate into a CUNQA instruction.
+
+        Args:
+            op: Gate operation to translate.
+        """
+        
+        gate_map = {
+            # 1 qubit
+            "H":   lambda: self._qubits[op.qubits[0]].H(),
+            "X":   lambda: self._qubits[op.qubits[0]].X(),
+            "Z":   lambda: self._qubits[op.qubits[0]].Z(),
+            "Y":   lambda: self._qubits[op.qubits[0]].Y(),
+            "S":   lambda: self._qubits[op.qubits[0]].S(),
+            "SDG": self._gate_not_implemented("SDG"),
+            "T":   lambda: self._qubits[op.qubits[0]].T(),
+            "TDG": self._gate_not_implemented("TDG"),
+
+            # 1 qubit
+            "RX": lambda: self._qubits[op.qubits[0]].rot_X(n=round(op.params[0]), d=16),
+            "RY": lambda: self._qubits[op.qubits[0]].rot_Y(n=round(op.params[0]), d=16),
+            "RZ": lambda: self._qubits[op.qubits[0]].rot_Z(n=round(op.params[0]), d=16),
+        }
+
+        if op.name in gate_map:
+            self._translated_ops.append(gate_map[op.name])
+
+    def _translate_controlled_gate(self, op: ControlledGate):
+        """
+        Translate a controlled quantum gate into a CUNQA instruction.
+
+        Args:
+            op: Controlled gate operation to translate.
+        """
+        
+        gate_2q = {
+            # 2 qubits
+            "CX": lambda: self._qubits[op.qubits[0]].cnot(self._qubits[op.qubits[1]]),
+            "CZ": lambda: self._qubits[op.qubits[0]].cphase(self._qubits[op.qubits[1]]),
+            "SWAP": lambda: self._qubits[op.qubits[0]].cnot(self._qubits[op.qubits[1]]),
+            
+            # 2 qubits
+            "CRZ": self._gate_not_implemented("CRZ"),
+        }
+
+        if op.name in gate_2q:
+            self._translated_ops.append(gate_2q[op.name])
+            
+
+    def _translate_classical_controlled_gate(self, op: ClassicalControlledGate):
+        """
+        Translate a classically controlled gate into a CUNQA instruction.
+
+        Args:
+            op: Classically controlled gate operation to translate.
+
+        Raises:
+            NotImplementedError: Always, because this operation is not yet supported.
+        """
+        raise NotImplementedError("ClassicalControlledGate is not yet implemented for the CUNQA backend.")
+
+    def _translate_measure(self, op: Measure):
+        """
+        Translate a measurement operation into a CUNQA instruction.
+
+        Args:
+            op: Measurement operation to translate.
+        """
+        def netqasm_measure():
+            result = self._qubits[op.qubits[0]].measure()
+            return result
+        
+        self._translated_ops.append(netqasm_measure)
+
+    def _translate_reset(self, op: Reset):
+        """
+        Translate a reset operation into a CUNQA instruction.
+
+        Args:
+            op: Reset operation to translate.
+        """
+        raise NotImplementedError("Reset is not yet implemented for the CUNQA backend.")
+
+    def _translate_barrier(self, op: Barrier):
+        """
+        Translate a barrier operation into a CUNQA instruction.
+
+        Args:
+            op: Barrier operation to translate.
+
+        Raises:
+            NotImplementedError: Always, because this operation is not yet supported.
+        """
+        raise NotImplementedError("Barrier is not implemented for the CUNQA backend.")
+
+    def _translate_operation_container(self, op: OperationContainer):
+        """
+        Translate an operation container by recursively translating its children.
+
+        Args:
+            op: Operation container to translate.
+        """
+        
+        for child in op.flatten():
+            self.translate(child)
+
+    def _translate_qsend(self, op: QSend):
+        """
+        Translate a quantum send operation into a CUNQA instruction.
+
+        Args:
+            op: Quantum send operation to translate.
+        """
+        
+        def netqasm_qsend():
+            epr_socket = self._comm.get_epr_socket(self._comm.rank, op.dest_rank)
+            socket = self._comm.get_socket(self._comm.rank, op.dest_rank)
+
+            for q_idx in op.qubits:
+                qubit = self._qubits[q_idx]
+                # Create EPR pair
+                epr = epr_socket.create_keep()[0]
+                # Teleport
+                qubit.cnot(epr)
+                qubit.H()
+                m1 = qubit.measure()
+                m2 = epr.measure()
+                socket.send_structured(StructuredMessage("Corrections", (m1, m2))) 
+        
+        self._translated_ops.append(netqasm_qsend)
+
+    def _translate_qrecv(self, op: QRecv):
+        """
+        Translate a quantum receive operation into a CUNQA instruction.
+
+        Args:
+            op: Quantum receive operation to translate.
+        """
+        def netqasm_qrecv():
+            epr_socket = self._comm.get_epr_socket(self._comm.rank, op.src_rank)
+            socket = self._comm.get_socket(self._comm.rank, op.src_rank)
+
+            for q_idx in op.qubits:
+                epr = epr_socket.recv_keep()[0]
+                self._comm.flush()
+
+                # Receive corrections
+                m1, m2 = socket.recv_structured().payload
+                if m2 == 1:
+                    epr.X()
+                if m1 == 1:
+                    epr.Z()
+                self._comm.flush()
+                
+                # SWAP the corrected EPR qubit into the local slot
+                new_q = self._comm.create_qubit()
+                epr.cnot(new_q)
+                new_q.cnot(epr)
+                epr.cnot(new_q)
+
+                self._qubits[q_idx] = new_q
+                self._comm.flush()
+        
+        self._translated_ops.append(netqasm_qrecv)
+
+    def _translate_qscatter(self, op: QScatter):
+        """
+        Translate a quantum scatter operation into CUNQA instructions.
+
+        Args:
+            op: Quantum scatter operation to translate.
+
+        Raises:
+            NotImplementedError: Always, because this operation is not yet supported.
+        """
+        def netqasm_qscatter():
+            rank = self._comm.rank
+            size = self._comm.size
+
+            if rank == op.sender_rank:
+                chunks = self._list_split(op.qubits, size)
+                for i in range(size):
+                    if i != op.sender_rank:
+                        self.qsend(chunks[i], i)
+            else:
+                self.qrecv(op.qubits, op.sender_rank)
+        
+        self._translated_ops.append(netqasm_qscatter)
+
+    def _translate_qgather(self, op: QGather):
+        """
+        Translate a quantum gather operation into CUNQA instructions.
+
+        Args:
+            op: Quantum gather operation to translate.
+
+        Raises:
+            NotImplementedError: Always, because this operation is not yet supported.
+        """
+        def netqasm_qgather():
+            rank = self._comm.rank
+            size = self._comm.size
+
+            if rank == op.recv_rank:
+                for i in range(size):
+                    if i != op.recv_rank:
+                        self.qrecv(op.qubits, i)
+            else:
+                self.qsend(op.qubits, op.recv_rank)
+        
+        self._translated_ops.append(netqasm_qgather)
+
+    def _translate_expose(self, op: Expose):
+        """
+        Translate an expose operation into a CUNQA instruction.
+
+        Args:
+            op: Expose operation to translate.
+
+        Raises:
+            NotImplementedError: Always, because this operation is not yet supported.
+        """
+        raise NotImplementedError("Expose is not yet implemented for the CUNQA backend.")
+
+    def _translate_unexpose(self, op: Unexpose):
+        """
+        Translate an unexpose operation into a CUNQA instruction.
+
+        Args:
+            op: Unexpose operation to translate.
+
+        Raises:
+            NotImplementedError: Always, because this operation is not yet supported.
+        """
+        raise NotImplementedError("Unexpose is not yet implemented for the CUNQA backend.")
+    
     def translate(self, op: Operation) -> Any:
         """
-        Translate an operation.
+        Dispatch an operation to its corresponding translation method.
 
         Args:
             op: Operation to translate.
 
         Returns:
-            None, because operations are executed eagerly and no translation
-            step is required.
-        """
-        return None
-
-    def build(self) -> dict:
-        """
-        Finalize the circuit execution and return the collected data.
-
-        Returns:
-            A dictionary containing the allocated qubits and the classical
-            measurement results.
-        """
-        self._comm.flush()
-        return {'qubits': self._qubits, 'results': self._results}
-
-    # ------------------------------------------------------------------
-    # Single-qubit gates
-    # ------------------------------------------------------------------
-
-    def h(self, qubit: int) -> NetQASMCircuitAdapter:
-        super().h(qubit)
-        self._qubits[qubit].H()
-        return self
-
-    def x(self, qubit: int) -> NetQASMCircuitAdapter:
-        super().x(qubit)
-        self._qubits[qubit].X()
-        return self
-
-    def y(self, qubit: int) -> NetQASMCircuitAdapter:
-        super().y(qubit)
-        self._qubits[qubit].Y()
-        return self
-
-    def z(self, qubit: int) -> NetQASMCircuitAdapter:
-        super().z(qubit)
-        self._qubits[qubit].Z()
-        return self
-
-    def s(self, qubit: int) -> NetQASMCircuitAdapter:
-        super().s(qubit)
-        self._qubits[qubit].S()
-        return self
-
-    def t(self, qubit: int) -> NetQASMCircuitAdapter:
-        super().t(qubit)
-        self._qubits[qubit].T()
-        return self
-
-    def k(self, qubit: int) -> NetQASMCircuitAdapter:
-        """
-        Apply the NetQASM-specific K gate.
-
-        Args:
-            qubit: Index of the target qubit.
-
-        Returns:
-            The current circuit adapter instance.
-        """
-        self._check_qubit(qubit)
-        self._qubits[qubit].K()
-        return self
-
-    # ------------------------------------------------------------------
-    # Parametric single-qubit gates
-    # ------------------------------------------------------------------
-
-    def rx(self, theta: float, qubit: int) -> NetQASMCircuitAdapter:
-        super().rx(theta, qubit)
-        # NetQASM discrete rotation: angle = n / 2^d * pi
-        self._qubits[qubit].rot_X(n=round(theta), d=16)
-        return self
-
-    def ry(self, theta: float, qubit: int) -> NetQASMCircuitAdapter:
-        super().ry(theta, qubit)
-        self._qubits[qubit].rot_Y(n=round(theta), d=16)
-        return self
-
-    def rz(self, theta: float, qubit: int) -> NetQASMCircuitAdapter:
-        super().rz(theta, qubit)
-        self._qubits[qubit].rot_Z(n=round(theta), d=16)
-        return self
-
-    # ------------------------------------------------------------------
-    # Two-qubit gates
-    # ------------------------------------------------------------------
-
-    def cx(self, control: int, target: int) -> NetQASMCircuitAdapter:
-        super().cx(control, target)
-        self._qubits[control].cnot(self._qubits[target])
-        return self
-
-    def cz(self, control: int, target: int) -> NetQASMCircuitAdapter:
-        super().cz(control, target)
-        self._qubits[control].cphase(self._qubits[target])
-        return self
-
-    def swap(self, qubit1: int, qubit2: int) -> NetQASMCircuitAdapter:
-        super().swap(qubit1, qubit2)
-        # Decompose SWAP into 3 CNOTs
-        q1, q2 = self._qubits[qubit1], self._qubits[qubit2]
-        q1.cnot(q2)
-        q2.cnot(q1)
-        q1.cnot(q2)
-        return self
-
-    # ------------------------------------------------------------------
-    # Non-unitary operations
-    # ------------------------------------------------------------------
-
-    def measure(self, qubit: int, cbit: int) -> NetQASMCircuitAdapter:
-        super().measure(qubit, cbit)
-        self._results[cbit] = self._qubits[qubit].measure()
-        return self
-
-    def measure_all(self) -> NetQASMCircuitAdapter:
-        """
-        Measure every qubit eagerly on NetQASM.
-
-        Returns:
-            The current circuit adapter instance.
+            The translated backend instruction or instructions.
 
         Raises:
-            ValueError: If there are fewer classical bits than qubits.
+            TypeError: If the operation type is unknown.
         """
-        if self._num_clbits < self._num_qubits:
-            raise ValueError(
-                "Not enough classical bits to measure all qubits "
-                f"({self._num_clbits} clbits < {self._num_qubits} qubits)."
-            )
-        for i in range(self._num_qubits):
-            self.measure(i, i)
-        return self
-
-    def reset(self, qubit: int) -> NetQASMCircuitAdapter:
-        super().reset(qubit)
-        # NetQASM has no native reset; the intent is recorded in the container.
-        return self
-
-    # ------------------------------------------------------------------
-    # Inter-rank communication — P2P (teleportation protocol)
-    # ------------------------------------------------------------------
-
-    def qsend(self, qubits: List[int], dest_rank: int) -> NetQASMCircuitAdapter:
-        """
-        Send qubits to another rank using teleportation.
-
-        Args:
-            qubits: Indices of the qubits to send.
-            dest_rank: Destination rank.
-
-        Returns:
-            The current circuit adapter instance.
-        """
-        super().qsend(qubits, dest_rank)
-
-        epr_socket = self._comm.get_epr_socket(self._comm.rank, dest_rank)
-        socket = self._comm.get_socket(self._comm.rank, dest_rank)
-
-        for q_idx in qubits:
-            qubit = self._qubits[q_idx]
-            # Create EPR pair
-            epr = epr_socket.create_keep()[0]
-            # Teleport
-            qubit.cnot(epr)
-            qubit.H()
-            m1 = qubit.measure()
-            m2 = epr.measure()
-            socket.send_structured(StructuredMessage("Corrections", (m1, m2)))  # type: ignore[arg-type]
-
-            self._comm.flush()
-
-        return self
-
-    def qrecv(self, qubits: List[int], src_rank: int) -> NetQASMCircuitAdapter:
-        """
-        Receive qubits from another rank into local slots via teleportation.
-
-        Args:
-            qubits: Indices of the local qubit slots that will receive the qubits.
-            src_rank: Source rank.
-
-        Returns:
-            The current circuit adapter instance.
-        """
-        super().qrecv(qubits, src_rank)
-        
-        epr_socket = self._comm.get_epr_socket(self._comm.rank, src_rank)
-        socket = self._comm.get_socket(self._comm.rank, src_rank)
-
-        for q_idx in qubits:
-            epr = epr_socket.recv_keep()[0]
-            self._comm.flush()
-
-            # Receive corrections
-            m1, m2 = socket.recv_structured().payload
-            if m2 == 1:
-                epr.X()
-            if m1 == 1:
-                epr.Z()
-            self._comm.flush()
-            
-            # SWAP the corrected EPR qubit into the local slot
-            new_q = self._comm.create_qubit()
-            epr.cnot(new_q)
-            new_q.cnot(epr)
-            epr.cnot(new_q)
-
-            self._qubits[q_idx] = new_q
-            self._comm.flush()
-
-        return self
-
-    # ------------------------------------------------------------------
-    # Inter-rank communication — collective operations
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _list_split(lst: list, n: int) -> List[list]:
-        """
-        Split a list into ``n`` chunks as evenly as possible.
-
-        Args:
-            lst: List to split.
-            n: Number of chunks.
-
-        Returns:
-            A list containing the generated chunks.
-        """
-        avg = len(lst) // n
-        rem = len(lst) % n
-        chunks: List[list] = []
-        start = 0
-        for i in range(n):
-            end = start + avg + (1 if i < rem else 0)
-            chunks.append(lst[start:end])
-            start = end
-        return chunks
-
-    def qscatter(self, qubits: List[int], sender_rank: int) -> NetQASMCircuitAdapter:
-        """
-        Scatter qubits from one rank to all ranks.
-
-        Args:
-            qubits: Qubits involved in the scatter operation.
-            sender_rank: Rank acting as the sender.
-
-        Returns:
-            The current circuit adapter instance.
-        """
-        super().qscatter(qubits, sender_rank)
-
-        rank = self._comm.rank
-        size = self._comm.size
-
-        if rank == sender_rank:
-            chunks = self._list_split(qubits, size)
-            for i in range(size):
-                if i != sender_rank:
-                    self.qsend(chunks[i], i)
-        else:
-            self.qrecv(qubits, sender_rank)
-
-        return self
-
-    def qgather(self, qubits: List[int], recv_rank: int) -> NetQASMCircuitAdapter:
-        """
-        Gather qubits from all ranks into a receiver rank.
-
-        Args:
-            qubits: Qubits involved in the gather operation.
-            recv_rank: Rank that receives the gathered qubits.
-
-        Returns:
-            The current circuit adapter instance.
-        """
-        super().qgather(qubits, recv_rank)
-
-        self._comm = self._comm
-        rank = self._comm.rank
-        size = self._comm.size
-
-        if rank == recv_rank:
-            for i in range(size):
-                if i != recv_rank:
-                    self.qrecv(qubits, i)
-        else:
-            self.qsend(qubits, recv_rank)
-
-        return self
-
-    # ------------------------------------------------------------------
-    # Inter-rank communication — expose / unexpose (telegate protocol)
-    # ------------------------------------------------------------------
-
-    def expose(self, qubits: List[int], rank: int = 0) -> _NetQASMExposeContext:
-        """
-        Expose qubits through a GHZ-based telegate protocol.
-
-        Args:
-            qubits: Indices of the qubits to expose.
-            rank: Rank that acts as the exposer.
-
-        Returns:
-            A context manager that automatically performs the matching
-            unexpose operation when leaving the ``with`` block.
-        """
-        for q in qubits:
-            self._check_qubit(q)
-        return _NetQASMExposeContext(self, qubits, rank)
-
-    def _do_expose(self, qubits: List[int], rank: int) -> None:
-        """
-        Execute the expose protocol eagerly.
-
-        Args:
-            qubits: Indices of the qubits to expose.
-            rank: Rank acting as the exposer.
-        """
-        # Record the operation in the container
-        self._ops.add(Expose(qubits, rank))
-        
-        self.qubits_exposed = [self._qubits[q] for q in qubits]
-
-        # Create GHZ across all ranks
-        self.ghz_qubit = self.create_ghz()
-
-        if rank == self._comm.rank:
-            # Exposer: CNOT exposed qubit with GHZ, measure GHZ, broadcast
-            self.qubits_exposed[0].cnot(self.ghz_qubit)  # type: ignore[union-attr]
-            measure = self.ghz_qubit.measure()  # type: ignore[union-attr]
-
-            for rnk in range(self._comm.size):
-                if rnk != self._comm.rank:
-                    socket = self._comm.get_socket(self._comm.rank, rnk)
-                    socket.send_structured(StructuredMessage("Expose", (measure,)))  # type: ignore[arg-type]
-                    self._comm.flush()
-        else:
-            # Non-exposer: receive correction, conditionally apply X
-            measure = self._comm.get_socket(self._comm.rank, rank).recv_structured().payload[0]
-            bit = int(measure)
-            if bit:
-                self.ghz_qubit.X()  # type: ignore[union-attr]
-            # Make the GHZ qubit accessible as the first "exposed" qubit
-            self._qubits[qubits[0]] = self.ghz_qubit  # type: ignore[assignment]
-
-    def _do_unexpose(self, rank: int) -> None:
-        """
-        Execute the unexpose protocol eagerly.
-
-        Args:
-            rank: Rank acting as the exposer.
-        """
-        self._ops.add(Unexpose(rank))
-
-        self.qubits_exposed.clear()
-
-        if rank == self._comm.rank:
-            bits: List[int] = []
-            for other_rank in range(self._comm.size):
-                if other_rank != self._comm.rank:
-                    socket = self._comm.get_socket(self._comm.rank, other_rank)
-                    bits.append(int(socket.recv_structured().payload[0]))
-                    self._comm.flush()
-            # Compute AND of all bits — apply Z correction if all are 1
-            if np.bitwise_and.reduce(bits):
-                self.ghz_qubit.Z()  # type: ignore[union-attr]
-        else:
-            # Non-exposer: H on GHZ, measure, send to exposer
-            self.ghz_qubit.H()  # type: ignore[union-attr]
-            measure = self.ghz_qubit.measure()  # type: ignore[union-attr]
-            self._comm.flush()
-            socket = self._comm.get_socket(self._comm.rank, rank)
-            socket.send_structured(StructuredMessage("Unexpose", (measure,)))  # type: ignore[arg-type]
-
-        self._comm.flush()
-
+        self._qubits = [
+            self._comm.create_qubit() for _ in range(self.num_qubits)
+        ]
+        super().translate(op)
+        return self._translated_ops
+    
     # ------------------------------------------------------------------
     # Collective helpers
     # ------------------------------------------------------------------
@@ -494,7 +377,7 @@ class NetQASMCircuitAdapter(Circuit):
             next_epr = my_eprs[self._comm.get_rank_name(self._comm.get_next_rank(self._comm.rank))]
             next_socket = self._comm.get_socket(self._comm.rank, self._comm.get_next_rank(self._comm.rank))
 
-        ghz_qubit, _measurement = create_ghz(
+        ghz_qubit, _ = create_ghz(
             down_epr_socket=prev_epr,
             up_epr_socket=next_epr,
             down_socket=prev_socket,
@@ -502,56 +385,3 @@ class NetQASMCircuitAdapter(Circuit):
         )
 
         return ghz_qubit
-
-
-# ---------------------------------------------------------------------------
-# Expose context manager for NetQASM eager execution
-# ---------------------------------------------------------------------------
-
-class _NetQASMExposeContext(_ExposeContext):
-    """
-    Context manager for the NetQASM expose/unexpose protocol.
-
-    This class inherits from :class:`_ExposeContext` so that its return
-    type remains compatible with the base :meth:`Circuit.expose`
-    signature.
-    """
-
-    def __init__(self, circuit: NetQASMCircuitAdapter, qubits: List[int], rank: int) -> None:
-        """
-        Initialize the expose context manager.
-
-        Args:
-            circuit: Circuit adapter that executes the expose protocol.
-            qubits: Indices of the qubits to expose.
-            rank: Rank acting as the exposer.
-        """
-        # Skip _ExposeContext.__init__ — we override __enter__/__exit__ entirely
-        self._circuit = circuit
-        self._qubits = qubits
-        self._rank = rank
-
-    def __enter__(self) -> NetQASMCircuitAdapter:
-        """
-        Enter the expose context.
-
-        Returns:
-            The circuit adapter after executing the expose protocol.
-        """
-        self._circuit._do_expose(self._qubits, self._rank)
-        return self._circuit
-
-    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
-        """
-        Exit the expose context and execute the unexpose protocol.
-
-        Args:
-            exc_type: Exception type, if one was raised.
-            exc_val: Exception instance, if one was raised.
-            exc_tb: Traceback, if one was raised.
-
-        Returns:
-            ``False`` so that exceptions, if any, are not suppressed.
-        """
-        self._circuit._do_unexpose(self._rank)
-        return False

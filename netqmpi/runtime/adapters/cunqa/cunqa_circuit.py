@@ -46,6 +46,10 @@ class CunqaCircuitAdapter(Circuit):
         # TODO: Initialize the underlying Cunqa circuit
         self._cunqa_circuit = CunqaCircuit(num_qubits, num_clbits, id=f"rank_{self._comm.rank}")
     
+    # ------------------------------------------------------------------
+    # Circuit abstract interface
+    # ------------------------------------------------------------------
+    
     def _translate_gate(self, op: Gate):
         """
         Translate a single-qubit unitary gate into a CUNQA instruction.
@@ -260,22 +264,7 @@ class CunqaCircuitAdapter(Circuit):
         Raises:
             TypeError: If the operation type is unknown.
         """
-        if not self._DISPATCH:
-            self._DISPATCH = self._build_dispatch()
-
-        handler = self._DISPATCH.get(type(op))
-        if handler is None:
-            # Walk the MRO to support subclasses not registered explicitly.
-            handler = next(
-                (self._DISPATCH[t] for t in type(op).__mro__ if t in self._DISPATCH),
-                None,
-            )
-        if handler is None:
-            raise TypeError(f"Unknown operation type: {type(op).__name__}")
-        return handler(op)
-    
+        super().translate(op)
+        return self._cunqa_circuit
     # TODO: Add specific methods for applying gates, measurements, etc.
     # These methods will delegate to the underlying Cunqa circuit
-
-    def build(self):
-        pass

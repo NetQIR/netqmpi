@@ -90,4 +90,6 @@ class Environment:
             A backend-specific :class:`~netqmpi.sdk.circuit.Circuit`
             instance ready to receive quantum operations.
         """
-        return self._executor.create_circuit(num_qubits, num_clbits, comm=self.comm)
+        circuit = self._executor.create_circuit(num_qubits, num_clbits, comm=self.comm)
+        self._comm.circuits.append(circuit)
+        return circuit

@@ -10,13 +10,13 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Iterator, List, Optional
 
-from netqmpi.sdk.operations.qmpi import (
-    Expose, QGather, QRecv, QScatter, QSend, Unexpose,
+from netqmpi.sdk.operations import (
+    Operation,
+    Gate, ControlledGate, ClassicalControlledGate,
+    Measure, Reset, Barrier,
+    OperationContainer,
+    QSend, QRecv, QScatter, QGather, Expose, Unexpose,
 )
-from netqmpi.sdk.operations.container import OperationContainer
-from netqmpi.sdk.operations.gate import ControlledGate, Gate
-from netqmpi.sdk.operations.non_unitary import Barrier, Measure, Reset
-from netqmpi.sdk.operations.operation import Operation
 
 if TYPE_CHECKING:
     from netqmpi.sdk import QMPICommunicator
@@ -163,26 +163,200 @@ class Circuit(ABC):
     # ------------------------------------------------------------------
 
     @abstractmethod
+    def _translate_gate(self, op: Gate):
+        """
+        Translate a single-qubit unitary gate into a backend instruction.
+
+        Args:
+            op: Gate operation to translate.
+        """
+
+    @abstractmethod
+    def _translate_controlled_gate(self, op: ControlledGate):
+        """
+        Translate a controlled quantum gate into a backend instruction.
+
+        Args:
+            op: Controlled gate operation to translate.
+        """
+            
+    @abstractmethod
+    def _translate_classical_controlled_gate(self, op: ClassicalControlledGate):
+        """
+        Translate a classically controlled gate into a backend instruction.
+
+        Args:
+            op: Classically controlled gate operation to translate.
+
+        Raises:
+            NotImplementedError: Always, because this operation is not yet supported.
+        """
+
+    @abstractmethod
+    def _translate_measure(self, op: Measure):
+        """
+        Translate a measurement operation into a backend instruction.
+
+        Args:
+            op: Measurement operation to translate.
+        """
+
+    @abstractmethod
+    def _translate_reset(self, op: Reset):
+        """
+        Translate a reset operation into a backend instruction.
+
+        Args:
+            op: Reset operation to translate.
+        """
+
+    @abstractmethod
+    def _translate_barrier(self, op: Barrier):
+        """
+        Translate a barrier operation into a backend instruction.
+
+        Args:
+            op: Barrier operation to translate.
+
+        Raises:
+            NotImplementedError: Always, because this operation is not yet supported.
+        """
+
+    @abstractmethod
+    def _translate_operation_container(self, op: OperationContainer):
+        """
+        Translate an operation container by recursively translating its children.
+
+        Args:
+            op: Operation container to translate.
+        """
+
+    @abstractmethod
+    def _translate_qsend(self, op: QSend):
+        """
+        Translate a quantum send operation into a backend instruction.
+
+        Args:
+            op: Quantum send operation to translate.
+        """
+
+    @abstractmethod
+    def _translate_qrecv(self, op: QRecv):
+        """
+        Translate a quantum receive operation into a backend instruction.
+
+        Args:
+            op: Quantum receive operation to translate.
+        """
+
+    @abstractmethod
+    def _translate_qscatter(self, op: QScatter):
+        """
+        Translate a quantum scatter operation into backend instructions.
+
+        Args:
+            op: Quantum scatter operation to translate.
+
+        Raises:
+            NotImplementedError: Always, because this operation is not yet supported.
+        """
+
+    @abstractmethod
+    def _translate_qgather(self, op: QGather):
+        """
+        Translate a quantum gather operation into backend instructions.
+
+        Args:
+            op: Quantum gather operation to translate.
+
+        Raises:
+            NotImplementedError: Always, because this operation is not yet supported.
+        """
+        raise NotImplementedError("QGather is not yet implemented for the backend backend.")
+
+    @abstractmethod
+    def _translate_expose(self, op: Expose):
+        """
+        Translate an expose operation into a backend instruction.
+
+        Args:
+            op: Expose operation to translate.
+
+        Raises:
+            NotImplementedError: Always, because this operation is not yet supported.
+        """
+
+    @abstractmethod
+    def _translate_unexpose(self, op: Unexpose):
+        """
+        Translate an unexpose operation into a backend instruction.
+
+        Args:
+            op: Unexpose operation to translate.
+
+        Raises:
+            NotImplementedError: Always, because this operation is not yet supported.
+        """
+
+    # Dispatch table: maps each Operation type to its translation method.
+    # ClassicalControlledGate and ControlledGate must appear before Gate
+    # because both are subclasses of Operation but not of Gate.
+    _DISPATCH: dict = {}
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        cls._DISPATCH = {}
+
+    def _build_dispatch(self):
+        """
+        Build the dispatch table for operation translation.
+
+        Returns:
+            A mapping from operation types to translation methods.
+        """
+        return {
+            ClassicalControlledGate: self._translate_classical_controlled_gate,
+            ControlledGate:          self._translate_controlled_gate,
+            Gate:                    self._translate_gate,
+            Measure:                 self._translate_measure,
+            Reset:                   self._translate_reset,
+            Barrier:                 self._translate_barrier,
+            OperationContainer:      self._translate_operation_container,
+            QSend:                   self._translate_qsend,
+            QRecv:                   self._translate_qrecv,
+            QScatter:                self._translate_qscatter,
+            QGather:                 self._translate_qgather,
+            Expose:                  self._translate_expose,
+            Unexpose:                self._translate_unexpose,
+        }
+
     def translate(self, op: Operation) -> Any:
         """
-        Translate a generic operation into a backend-native instruction.
+        Dispatch an operation to its corresponding translation method.
 
         Args:
             op: Operation to translate.
 
         Returns:
-            A backend-specific object representing the translated
-            operation.
-        """
+            The translated backend instruction or instructions.
 
-    @abstractmethod
-    def build(self) -> Any:
+        Raises:
+            TypeError: If the operation type is unknown.
         """
-        Materialize the circuit for the target backend.
+        if not self._DISPATCH:
+            self._DISPATCH = self._build_dispatch()
 
-        Returns:
-            A backend-native circuit object ready for execution.
-        """
+        handler = self._DISPATCH.get(type(op))
+        if handler is None:
+            # Walk the MRO to support subclasses not registered explicitly.
+            handler = next(
+                (self._DISPATCH[t] for t in type(op).__mro__ if t in self._DISPATCH),
+                None,
+            )
+        if handler is None:
+            raise TypeError(f"Unknown operation type: {type(op).__name__}")
+        
+        return handler(op)
 
     # ------------------------------------------------------------------
     # Internal helpers

@@ -13,23 +13,19 @@ def main(env: Environment = None):
     next_rank = comm.get_next_rank(rank)
     previous_rank = comm.get_prev_rank(rank)
 
-    with comm:
+    with comm: # Sólo se ejecuta lo que hay en el with
         if rank == 0:
             circuit = env.create_circuit(num_qubits=1, num_clbits=0)
             circuit.h(0)
-            print_info(f"start to teleport a qubit to rank_{next_rank}", rank)
-            circuit.qsend([0], next_rank)
+            comm.qsend(circuit, [0], next_rank)
         else:
             circuit = env.create_circuit(num_qubits=1, num_clbits=1)
-            circuit.qrecv([0], previous_rank)
+            comm.qrecv(circuit, [0], previous_rank)
             circuit.measure(0, 0)
 
-        result = circuit.build()
+    results = comm.results # Estos son los resultados de la ejecución
 
     if rank != 0:
-        print_info(f"measure: {result['results'][0]}", rank)
+        print(f"measure: {results}") # Que automaticamente imprima el rank desde donde se imprime
     else:
-        print_info("teleportation complete", rank)
-            
-if __name__ == "__main__":
-    main()
+        print("teleportation complete")

@@ -8,6 +8,11 @@ backend-agnostic :class:`QMPICommunicator` interface.
 from __future__ import annotations
 
 from netqmpi.sdk import QMPICommunicator
+from netqmpi.runtime.run_config import RunConfig
+
+from cunqa.qpu import QPU
+from cunqa.qpu import run
+from cunqa.qjob import gather
 
 class CunqaCommunicator(QMPICommunicator):
     """
@@ -21,7 +26,10 @@ class CunqaCommunicator(QMPICommunicator):
         size: Total number of ranks in the communicator.
     """
 
-    def __init__(self, rank: int, size: int) -> None:
+    cunqa_circuits = []
+    qpus = []
+
+    def __init__(self, rank: int, size: int, qpu: QPU, config: RunConfig) -> None:
         """
         Initialize the communicator.
 
@@ -30,6 +38,8 @@ class CunqaCommunicator(QMPICommunicator):
             size: Total number of ranks in the communicator.
         """
         super().__init__(rank, size)
+        CunqaCommunicator.qpus.append(qpu)
+        self._config = config
 
     def __enter__(self) -> None:
         """
@@ -52,4 +62,16 @@ class CunqaCommunicator(QMPICommunicator):
         Returns:
             None.
         """
+        for circuit in self.circuits:
+            CunqaCommunicator.cunqa_circuits.append(circuit.translate(circuit.ops))
+            
+        if len(CunqaCommunicator.cunqa_circuits) == self.size:
+            qjobs = run(
+                [circuit for circuit in CunqaCommunicator.cunqa_circuits], 
+                CunqaCommunicator.qpus, 
+                shots = self._config.shots
+            )
+            cunqa_results = gather(qjobs)
+            self.results = cunqa_results[0].counts
+        
         return None

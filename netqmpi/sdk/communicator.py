@@ -10,8 +10,11 @@ imported here.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, List, Dict
 from abc import ABC, abstractmethod
+
+from netqmpi.sdk.circuit import Circuit
+from netqmpi.runtime.run_config import RunConfig
 
 class QMPICommunicator(ABC):
     """
@@ -38,6 +41,8 @@ class QMPICommunicator(ABC):
         """
         self._rank = rank
         self._size = size
+        self.circuits: List[Circuit] = []
+        self.results: Dict = {}
 
     # ------------------------------------------------------------------
     # Properties
@@ -91,6 +96,45 @@ class QMPICommunicator(ABC):
             A backend-specific result from the context manager exit.
         """
         pass
+
+
+    # ------------------------------------------------------------------
+    # Quantum operations
+    # ------------------------------------------------------------------
+
+    def qsend(self, circuit, qubits: List[int], dest_rank: int):
+        """
+        Send a qubit to the destination rank using teleportation.
+        """
+        circuit.qsend(qubits, dest_rank)
+
+    def qrecv(self, circuit, qubits: List[int], src_rank: int) -> List[int]:
+        """
+        Receive a qubit from the source rank using teleportation.
+        """
+        return circuit.qrecv(qubits, src_rank)
+
+    def qscatter(self, qubits: List[int], rank_sender: int) -> List[int]:
+        pass
+
+    def qgather(self, qubits: List[int], rank_recv: int) -> List[int]:
+        pass
+
+    def expose(self, qubits: List[int], rank: int = 0):
+        """
+        Expose qubits to the network.
+        :param qubits: List of qubits to expose.
+        :param rank: Exposer rank
+        """
+        pass
+    def unexpose(self, rank: int = 0):
+        """
+        Unexpose qubits from the network.
+        :param rank: Exposer rank
+        :return: None
+        """
+        pass
+
 
     # ------------------------------------------------------------------
     # Utility

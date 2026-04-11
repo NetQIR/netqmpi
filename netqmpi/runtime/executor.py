@@ -36,7 +36,7 @@ class Executor(ABC):
         config: Backend-specific configuration dictionary.
     """
 
-    def __init__(self, size: int, config: Dict[str, Any] = None) -> None:
+    def __init__(self, size: int, config: RunConfig) -> None:
         """
         Initialize the executor.
 
@@ -45,7 +45,7 @@ class Executor(ABC):
             config: Backend-specific configuration dictionary.
         """
         self._size = size
-        self._config = config or {}
+        self._config = config
 
     # ------------------------------------------------------------------
     # Properties
@@ -95,13 +95,7 @@ class Executor(ABC):
         """
 
     @abstractmethod
-    def build_apps(
-        self,
-        file: str,
-        num_processes: int,
-        argv_file: Optional[str] = None,
-        roles_cfg_file: str = "roles.yaml",
-    ) -> Any:
+    def build_apps(self, file: str, size: int) -> Any:
         """
         Load a script and build the rank-specific application instances.
 
@@ -112,10 +106,7 @@ class Executor(ABC):
         Args:
             file: Path to the NetQMPI Python script. It must contain a
                 ``main(env=None)`` function.
-            num_processes: Number of parallel quantum nodes to simulate.
-            argv_file: Optional YAML file containing per-rank argument
-                values.
-            roles_cfg_file: Path to the roles configuration YAML file.
+            size: Number of parallel quantum nodes to simulate.
 
         Returns:
             A backend-specific application instance ready to be passed to
@@ -123,7 +114,7 @@ class Executor(ABC):
         """
 
     @abstractmethod
-    def run(self, app_instance: Any, config: RunConfig) -> None:
+    def run(self, apps: Any) -> None:
         """
         Execute an application instance with the given configuration.
 
