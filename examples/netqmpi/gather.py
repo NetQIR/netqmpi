@@ -1,4 +1,4 @@
-from netqmpi.sdk.communicator import QMPICommunicator
+from netqmpi.sdk.environment import Environment
 
 def print_info(message, rank):
     """
@@ -6,28 +6,31 @@ def print_info(message, rank):
     """
     print(f"rank_{rank}: {message}")
 
-def main(app_config=None, rank=0, size=1):
-    COMM_WORLD = QMPICommunicator(rank, size, app_config)
-
-    my_rank = COMM_WORLD.get_rank()
+def main(env: Environment = None):
+    comm = env.comm
+    rank = comm.get_rank()
+    size = comm.get_size()
     ROOT_RANK = 0
 
-    with COMM_WORLD:
-        # Create a qubit |++++> to gather between the nodes
-        local_qubits = [COMM_WORLD.create_qubit() for _ in range(size)]
-        for q in local_qubits:
-            q.H()
+    with comm:
+        if rank == ROOT_RANK:
+            # Root allocates size qubits (one per rank), applies H, gathers
+            circuit = env.create_circuit(num_qubits=size, num_clbits=size)
+            for i in range(size):
+                circuit.h(i)
+            circuit.qgather(list(range(size)), ROOT_RANK)
+            circuit.measure_all()
+            result = circuit.build()
+            comm.flush()
 
-        full_qubits = COMM_WORLD.qgather(local_qubits, ROOT_RANK)
-        COMM_WORLD.flush()
-
-        if my_rank == ROOT_RANK:
-            # Measure the qubits
-            binary_code = []
-            for q in full_qubits:
-                value = q.measure()
-                COMM_WORLD.flush()
-                print_info(f"{q}-{value}", rank)
+            for i, val in enumerate(result['results']):
+                print_info(f"qubit {i} -> {val}", rank)
+        else:
+            # Non-root ranks allocate 1 qubit, H, then send via gather
+            circuit = env.create_circuit(num_qubits=1, num_clbits=0)
+            circuit.h(0)
+            circuit.qgather([0], ROOT_RANK)
+            circuit.build()
 
 if __name__ == "__main__":
     main()

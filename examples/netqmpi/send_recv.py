@@ -1,4 +1,4 @@
-from netqmpi.sdk.communicator import QMPICommunicator
+from netqmpi.sdk.environment import Environment
 
 def print_info(message, rank):
     """
@@ -6,25 +6,26 @@ def print_info(message, rank):
     """
     print(f"rank_{rank}: {message}")
 
-def main(app_config=None, rank=0, size=1):
-    COMM_WORLD = QMPICommunicator(rank, size, app_config)
+def main(env: Environment = None):
+    comm = env.comm
+    rank = comm.rank
+    
+    next_rank = comm.get_next_rank(rank)
+    previous_rank = comm.get_prev_rank(rank)
 
-    next_rank = COMM_WORLD.get_next_rank(rank)
-    previous_rank = COMM_WORLD.get_prev_rank(rank)
-
-    with COMM_WORLD:
+    with comm: # Sólo se ejecuta lo que hay en el with
         if rank == 0:
-            # Create a qubit |+> to teleport
-            q = COMM_WORLD.create_qubit()
-            q.H()
-            print_info(f"start to teleport a qubit to rank_{next_rank}", rank)
-
-            COMM_WORLD.qsend([q], next_rank)
+            circuit = env.create_circuit(num_qubits=1, num_clbits=0)
+            circuit.h(0)
+            comm.qsend(circuit, [0], next_rank)
         else:
-            [qubit_recv] = COMM_WORLD.qrecv(previous_rank)
-            measurement = qubit_recv.measure()
-            COMM_WORLD.flush()
-            print_info(f"measure: {measurement}", rank)
+            circuit = env.create_circuit(num_qubits=1, num_clbits=1)
+            comm.qrecv(circuit, [0], previous_rank)
+            circuit.measure(0, 0)
 
-if __name__ == "__main__":
-    main()
+    results = comm.results # Estos son los resultados de la ejecución
+
+    if rank != 0:
+        print(f"measure: {results}") # Que automaticamente imprima el rank desde donde se imprime
+    else:
+        print("teleportation complete")

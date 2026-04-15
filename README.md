@@ -43,23 +43,24 @@ The comparison is structured as follows:
 ```python
 from netqmpi.sdk.communicator import QMPICommunicator
 
-def main(app_config=None, rank=0, size=1):
-    COMM_WORLD = QMPICommunicator(rank, size, app_config)
+def main(comm: QMPICommunicator = None):
+    rank = comm.get_rank()
+    size = comm.get_size()
+    
+    next_rank = comm.get_next_rank(rank)
+    previous_rank = comm.get_prev_rank(rank)
 
-    next_rank = COMM_WORLD.get_next_rank(rank)
-    previous_rank = COMM_WORLD.get_prev_rank(rank)
-
-    with COMM_WORLD:
+    with comm:
         if rank == 0:
             # Create a qubit |+> to teleport
-            q = COMM_WORLD.create_qubit()
+            q = comm.create_qubit()
             q.H()
 
-            COMM_WORLD.qsend([q], next_rank)
+            comm.qsend([q], next_rank)
         else:
-            [qubit_recv] = COMM_WORLD.qrecv(previous_rank)
+            [qubit_recv] = comm.qrecv(previous_rank)
             measurement = qubit_recv.measure()
-            COMM_WORLD.flush()
+            comm.flush()
 ```
 ### NetQASM version
 Node 0 (receiver):

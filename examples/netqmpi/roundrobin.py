@@ -1,4 +1,5 @@
-from netqmpi.sdk.communicator import QMPICommunicator
+from netqmpi.sdk.environment import Environment
+
 
 def print_info(message, rank):
     """
@@ -6,35 +7,36 @@ def print_info(message, rank):
     """
     print(f"rank_{rank}: {message}")
 
-def main(app_config=None, rank=0, size=1):
-    COMM_WORLD = QMPICommunicator(rank, size, app_config)
+def main(env: Environment = None):
+    comm = env.comm
+    rank = comm.get_rank()
+    size = comm.get_size()
+    next_rank = comm.get_next_rank(rank)
+    previous_rank = comm.get_prev_rank(rank)
 
-    next_rank = COMM_WORLD.get_next_rank(rank)
-    previous_rank = COMM_WORLD.get_prev_rank(rank)
-
-    with COMM_WORLD:
+    with comm:
         if rank == 0:
-            # Create a qubit |+> to teleport
-            q = COMM_WORLD.create_qubit()
-            q.H()
+            circuit = env.create_circuit(num_qubits=1, num_clbits=0)
+            circuit.h(0)
             print_info(f"start to teleport a qubit to rank_{next_rank}", rank)
-
-            COMM_WORLD.qsend([q], next_rank)
-
+            circuit.qsend([0], next_rank)
+            circuit.build()
         else:
+            circuit = env.create_circuit(num_qubits=1, num_clbits=1)
             print_info(f"starting to receive a qubit from {previous_rank}", rank)
-            [qubit_recv] = COMM_WORLD.qrecv(previous_rank)
+            circuit.qrecv([0], previous_rank)
 
             # Send to next rank only if not the last rank
             if rank != size - 1:
                 print_info(f"received a qubit from rank_{previous_rank}", rank)
-                COMM_WORLD.qsend([qubit_recv], next_rank)
+                circuit.qsend([0], next_rank)
                 print_info(f"sent a qubit to rank_{next_rank}", rank)
+                circuit.build()
             else:
-                # Measure the qubit
-                measurement = qubit_recv.measure()
-                COMM_WORLD.flush()
-                print_info(f"measurement {measurement}", rank)
+                circuit.measure(0, 0)
+                result = circuit.build()
+                comm.flush()
+                print_info(f"measurement {result['results'][0]}", rank)
 
 if __name__ == "__main__":
     main()

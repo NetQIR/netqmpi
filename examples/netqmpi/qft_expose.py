@@ -1,27 +1,23 @@
-from netqmpi.sdk.communicator import QMPICommunicator
+from netqmpi.sdk.environment import Environment
 
-def main(app_config = None, rank=0, size=1):
-    COMM_WORLD = QMPICommunicator(rank, size, app_config)
+def main(env: Environment = None):
+    comm = env.comm
+    rank = comm.get_rank()
     ROOT_RANK = 0
 
-    with COMM_WORLD:
-        qubit_exposed = []
-
-        my_qubit = COMM_WORLD.create_qubit()
+    with comm:
+        circuit = env.create_circuit(num_qubits=1, num_clbits=1)
 
         if rank == ROOT_RANK:
-            qubit_exposed.append(my_qubit)
-            my_qubit.H()
+            circuit.h(0)
 
-        COMM_WORLD.expose(qubit_exposed, 0)
+        with circuit.expose([0], rank=ROOT_RANK):
+            if rank == 1:
+                # Operate on the exposed qubit from another rank
+                circuit.cx(0, 0)  # example: identity CNOT (both same qubit)
 
-        if rank == 1:
-            qubit_exposed[0].cnot(my_qubit)
+        circuit.measure(0, 0)
+        result = circuit.build()
+        comm.flush()
 
-        COMM_WORLD.unexpose(0)
-
-        measure = my_qubit.measure()
-
-        COMM_WORLD.flush()
-
-        print(f"rank_{rank} measured {measure}")
+        print(f"rank_{rank} measured {result['results'][0]}")
