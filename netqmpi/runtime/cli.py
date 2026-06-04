@@ -11,8 +11,6 @@ import time, argparse
 from typing import Optional
 
 from netqmpi.runtime import Executor
-from netqmpi.runtime.adapters.cunqa import CunqaExecutorAdapter, CunqaRunConfig
-from netqmpi.runtime.adapters.netqasm import NetQASMExecutorAdapter, NetQASMRunConfig
 from netqmpi.runtime.run_config import RunConfig
 
 def simulate(
@@ -85,12 +83,18 @@ def main():
         parser.error("Number of processes must be at least 1")
     
     if args.netqasm:
+        from netqmpi.runtime.adapters.netqasm import NetQASMExecutorAdapter, NetQASMRunConfig
+
         config = NetQASMRunConfig(shots=(args.shots or 1))
         executor = NetQASMExecutorAdapter(args.num_procs, config=config)
     elif args.cunqa:
+        from netqmpi.runtime.adapters.cunqa import CunqaExecutorAdapter, CunqaRunConfig
+
         config = CunqaRunConfig(shots=(args.shots or 1024))
         executor = CunqaExecutorAdapter(args.num_procs, config=config)
     else:
+        from netqmpi.runtime.adapters.netqasm import NetQASMExecutorAdapter, NetQASMRunConfig
+
         print("No backend flag; using default (NetQASM)")
         executor = NetQASMExecutorAdapter(args.num_procs)    
     
