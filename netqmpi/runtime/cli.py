@@ -66,7 +66,7 @@ def main():
 
     backend_group = parser.add_mutually_exclusive_group()
     backend_group.add_argument("--netqasm", action="store_true", help="Use NetQASM backend")
-    backend_group.add_argument("--cunqa", action="store_true", help="Use CunQA backend")
+    backend_group.add_argument("--cunqa", action="store_true", help="Use CUNQA backend")
 
     parser.add_argument(
         "--shots", 

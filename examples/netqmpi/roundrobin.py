@@ -9,8 +9,8 @@ def print_info(message, rank):
 
 def main(env: Environment = None):
     comm = env.comm
-    rank = comm.get_rank()
-    size = comm.get_size()
+    rank = comm.rank
+    size = comm.size
     next_rank = comm.get_next_rank(rank)
     previous_rank = comm.get_prev_rank(rank)
 
