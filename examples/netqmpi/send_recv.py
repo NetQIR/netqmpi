@@ -15,7 +15,7 @@ def main(env: Environment = None):
 
     with comm: # Sólo se ejecuta lo que hay en el with
         if rank == 0:
-            circuit = env.create_circuit(num_qubits=1, num_clbits=0)
+            circuit = env.create_circuit(num_qubits=1, num_clbits=1)
             circuit.h(0)
             comm.qsend(circuit, [0], next_rank)
         else:

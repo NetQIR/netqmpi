@@ -67,6 +67,14 @@ def main():
     backend_group = parser.add_mutually_exclusive_group()
     backend_group.add_argument("--netqasm", action="store_true", help="Use NetQASM backend")
     backend_group.add_argument("--cunqa", action="store_true", help="Use CUNQA backend")
+    backend_group.add_argument("--aer", action="store_true", help="Use Qiskit AerSimulator backend")
+
+    parser.add_argument(
+        "--transfer-mode",
+        choices=["swap", "teleport"],
+        default="swap",
+        help="Qubit transfer mode for the Aer backend: 'swap' (default) or 'teleport'",
+    )
 
     parser.add_argument(
         "--shots", 
@@ -92,6 +100,14 @@ def main():
 
         config = CunqaRunConfig(shots=(args.shots or 1024))
         executor = CunqaExecutorAdapter(args.num_procs, config=config)
+    elif args.aer:
+        from netqmpi.runtime.adapters.aer import AerExecutorAdapter, AerSimulatorConfig
+
+        config = AerSimulatorConfig(
+            shots=(args.shots or 1024),
+            transfer_mode=args.transfer_mode,
+        )
+        executor = AerExecutorAdapter(args.num_procs, config=config)
     else:
         from netqmpi.runtime.adapters.netqasm import NetQASMExecutorAdapter, NetQASMRunConfig
 
