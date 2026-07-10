@@ -68,6 +68,7 @@ def main():
     backend_group.add_argument("--netqasm", action="store_true", help="Use NetQASM backend")
     backend_group.add_argument("--cunqa", action="store_true", help="Use CUNQA backend")
     backend_group.add_argument("--aer", action="store_true", help="Use Qiskit AerSimulator backend")
+    backend_group.add_argument("--qoala", action="store_true", help="Use Qoala backend (simulation only)")
 
     parser.add_argument(
         "--transfer-mode",
@@ -77,9 +78,17 @@ def main():
     )
 
     parser.add_argument(
-        "--shots", 
-        type=int, 
+        "--shots",
+        type=int,
         help="Number of shots"
+    )
+
+    parser.add_argument(
+        "--qoala-hw-config",
+        type=str,
+        default=None,
+        help="Path to a YAML qdevice hardware config for the Qoala backend "
+             "(T1/T2, gate/init/measure times, depolar probs). Qoala backend only.",
     )
 
     # TODO: Turn ON and OFF the timer
@@ -89,7 +98,10 @@ def main():
 
     if args.num_procs < 1:
         parser.error("Number of processes must be at least 1")
-    
+
+    if args.qoala_hw_config and not args.qoala:
+        parser.error("--qoala-hw-config is only valid with the --qoala backend")
+
     if args.netqasm:
         from netqmpi.runtime.adapters.netqasm import NetQASMExecutorAdapter, NetQASMRunConfig
 
@@ -108,11 +120,22 @@ def main():
             transfer_mode=args.transfer_mode,
         )
         executor = AerExecutorAdapter(args.num_procs, config=config)
+    elif args.qoala:
+        from netqmpi.runtime.adapters.qoala import (
+            QoalaExecutorAdapter, QoalaRunConfig, QoalaQDeviceConfig,
+        )
+
+        hw_config = (
+            QoalaQDeviceConfig.from_yaml(args.qoala_hw_config)
+            if args.qoala_hw_config else None
+        )
+        config = QoalaRunConfig(shots=(args.shots or 10), hw_config=hw_config)
+        executor = QoalaExecutorAdapter(args.num_procs, config=config)
     else:
         from netqmpi.runtime.adapters.netqasm import NetQASMExecutorAdapter, NetQASMRunConfig
 
         print("No backend flag; using default (NetQASM)")
-        executor = NetQASMExecutorAdapter(args.num_procs)    
+        executor = NetQASMExecutorAdapter(args.num_procs)
     
     simulate(
         script=args.script,
