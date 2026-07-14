@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='netqmpi',
-    version='0.2.0',
+    version='0.3.0',
     entry_points={
         'console_scripts': [
             'netqmpi=netqmpi.runtime.cli:main', 
@@ -15,7 +15,7 @@ setup(
     author='F. Javier Cardama',
     author_email='javier.cardama@usc.es',
     description='A high-level abstraction layer similar to MPI for distributed quantum programming over NetQASM.',
-    url='https://github.com/NetQIR/net-qmpi',  # Replace with your project's URL
+    url='https://github.com/NetQIR/netqmpi',  # Replace with your project's URL
     classifiers=[
         'Programming Language :: Python :: 3',
         'License :: OSI Approved :: MIT License',
