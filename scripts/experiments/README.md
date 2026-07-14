@@ -1,7 +1,24 @@
-# Experimento: propagación de parámetros de hardware Qoala vía NetQMPI
+# Experimentos del backend Qoala
 
 > Backend: **Qoala (simulación NetSquid)**. Requiere el entorno conda `qoala`
 > (Python 3.11, netqasm ≥2.0). No corre en el entorno `squidasm`.
+
+Experimentos en este directorio:
+
+1. **Propagación de parámetros de hardware** (este archivo) — valida que el ruido
+   del qdevice (T1/T2, tiempos, despolarización de puerta) se propaga fielmente a
+   través de la traducción de NetQMPI, comparando contra un control Qoala nativo.
+2. **Fidelidad del EPR en la teleportación** →
+   [README_epr_fidelity.md](README_epr_fidelity.md) — con qdevice perfecto, barre
+   la fidelidad del par EPR de `qsend`/`qrecv` y la compara con el enlace perfecto.
+3. **Scheduling / multitarea** →
+   [README_scheduling.md](README_scheduling.md) — dos programas NetQMPI
+   compartiendo un nodo; el scheduler de Qoala reduce el makespan (−18.9%) sin
+   degradar la fidelidad (con Gantt CPS/QPS del intercalado).
+
+---
+
+# Experimento 1: propagación de parámetros de hardware Qoala vía NetQMPI
 
 ## Objetivo
 
@@ -62,14 +79,27 @@ Shots por punto: **1000** (por defecto). Tiempos de puerta por defecto:
 
 ## Cómo se pasan los parámetros de hardware
 
-Sin tocar el SDK agnóstico. Solo por el Runtime del backend Qoala:
+Sin tocar el SDK agnóstico. Solo por el Runtime del backend Qoala, mediante el
+YAML unificado de `--config` (bloque `qoala.hardware`):
 
-- **CLI:** `netqmpi -n 2 app.py --qoala --qoala-hw-config path/to/hw.yaml`
+- **CLI:** `netqmpi -n 2 app.py --qoala --config config.yaml`
 - **Programático:** `QoalaRunConfig(hw_config=QoalaQDeviceConfig(...))`
 
-Claves YAML: `t1`, `t2`, `single_qubit_gate_time`, `two_qubit_gate_time`,
-`init_time`, `measure_time`, `single_qubit_gate_depolar_prob`,
-`two_qubit_gate_depolar_prob`.
+```yaml
+# config.yaml
+qoala:
+  hardware:
+    t1: 0
+    t2: 0
+    single_qubit_gate_time: 5000
+    two_qubit_gate_time: 200000
+    init_time: 5000
+    measure_time: 5000
+    single_qubit_gate_depolar_prob: 0.0
+    two_qubit_gate_depolar_prob: 0.0
+```
+
+Ejemplo completo en [configs/qoala_example.yaml](configs/qoala_example.yaml).
 
 ## Ejecutar
 
