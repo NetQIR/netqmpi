@@ -87,3 +87,32 @@ def test_qoala_hardware_params_propagate():
         QoalaQDeviceConfig(single_qubit_gate_depolar_prob=0.5), shots=400
     )
     assert 0.4 <= depolarised <= 0.6, depolarised
+
+
+@pytest.mark.integration
+def test_qoala_config_file(tmp_path):
+    """The unified --config YAML feeds backend params (here, EPR fidelity).
+
+    Uses the X-basis probe (noise-free fidelity 1.0): a maximally mixed link
+    (fidelity 0.25) collapses the teleported |+> to ~0.5, proving the config
+    value reaches the backend.
+    """
+    probe = REPO_ROOT / "scripts" / "experiments" / "apps" / "dist_superposition_xbasis.py"
+    cfg = tmp_path / "cfg.yaml"
+    cfg.write_text("qoala:\n  link_fidelity: 0.25\n")
+
+    shots = 400
+    proc = subprocess.run(
+        [sys.executable, "-m", "netqmpi.runtime.cli",
+         "-n", "2", str(probe), "--qoala", "--config", str(cfg), "--shots", str(shots)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    assert proc.returncode == 0, f"CLI failed:\n{proc.stdout}\n{proc.stderr}"
+
+    counts = ast.literal_eval(re.search(r"measure:\s*(\{.*\})", proc.stdout).group(1))
+    assert sum(counts.values()) == shots, counts
+    p0 = counts.get("0", 0) / shots
+    assert 0.4 <= p0 <= 0.6, p0  # ~0.5, not the noise-free 1.0

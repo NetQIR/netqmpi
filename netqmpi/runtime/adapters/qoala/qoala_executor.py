@@ -96,14 +96,6 @@ class QoalaQDeviceConfig:
             raise ValueError(f"Unknown qdevice config keys: {sorted(unknown)}")
         return cls(**{k: data[k] for k in cls._FIELDS if k in data})
 
-    @classmethod
-    def from_yaml(cls, path: str) -> "QoalaQDeviceConfig":
-        """Load qdevice hardware parameters from a YAML file."""
-        import yaml  # local import: only needed when a hw config file is used
-        with open(path) as fh:
-            data = yaml.safe_load(fh) or {}
-        return cls.from_dict(data)
-
 
 @dataclass
 class QoalaRunConfig(RunConfig):
@@ -115,10 +107,14 @@ class QoalaRunConfig(RunConfig):
         num_qubits_per_node: Physical qubits exposed by every node. If ``None``,
             it is inferred from the compiled circuits (user qubits plus a
             teleportation scratch slot).
-        link_duration: EPR-pair generation time (ns) for the perfect links.
+        link_duration: EPR-pair generation time (ns) for the links.
         qnos_instr_time: Duration (ns) of a single quantum-processor instruction.
         hw_config: Per-node qdevice hardware parameters. If ``None``, a perfect
             qdevice (no memory/gate noise) is used.
+        link_fidelity: Fidelity of the generated EPR pairs to the ideal Bell
+            state, in ``[0.25, 1.0]``. ``1.0`` (default) uses perfect links;
+            values below 1.0 use a depolarising link with
+            ``prob_max_mixed = (4/3)(1 - link_fidelity)``.
         seed: Optional NetSquid random seed for reproducible runs.
     """
 
@@ -126,7 +122,33 @@ class QoalaRunConfig(RunConfig):
     link_duration: float = 1000.0
     qnos_instr_time: float = 1000.0
     hw_config: Optional[QoalaQDeviceConfig] = None
+    link_fidelity: float = 1.0
     seed: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        if not (0.25 <= self.link_fidelity <= 1.0):
+            raise ValueError(
+                f"link_fidelity must be in [0.25, 1.0], got {self.link_fidelity}."
+            )
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "QoalaRunConfig":
+        """
+        Build a Qoala run config from a dict, translating the nested
+        ``hardware`` block into a :class:`QoalaQDeviceConfig`.
+
+        Args:
+            data: Merged config settings for the Qoala backend.
+
+        Returns:
+            A :class:`QoalaRunConfig` instance.
+        """
+        data = dict(data)
+        hardware = data.pop("hardware", None)
+        config = super().from_dict(data)
+        if hardware is not None:
+            config.hw_config = QoalaQDeviceConfig.from_dict(hardware)
+        return config
 
 
 class QoalaExecutorAdapter(Executor):
@@ -273,10 +295,19 @@ class QoalaExecutorAdapter(Executor):
             for r in ranks
         ]
 
-        network_cfg = ProcNodeNetworkConfig.from_nodes_perfect_links(
-            nodes=nodes, link_duration=self._config.link_duration
-        )
-        # Perfect links cover EPR generation only; classical channels are separate.
+        # Perfect link unless an imperfect EPR fidelity is requested. The
+        # depolarising link isolates entanglement noise from the qdevice.
+        if self._config.link_fidelity >= 1.0:
+            network_cfg = ProcNodeNetworkConfig.from_nodes_perfect_links(
+                nodes=nodes, link_duration=self._config.link_duration
+            )
+        else:
+            network_cfg = ProcNodeNetworkConfig.from_nodes_imperfect_links(
+                nodes=nodes,
+                link_duration=self._config.link_duration,
+                link_fid=self._config.link_fidelity,
+            )
+        # Links cover EPR generation only; classical channels are separate.
         network_cfg.cconns = [
             ClassicalConnectionConfig.from_nodes(i, j, 1e9)
             for i in ranks
