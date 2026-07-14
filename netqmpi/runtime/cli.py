@@ -8,10 +8,37 @@ the corresponding adapter package.
 """
 
 import time, argparse
-from typing import Optional
+from typing import Optional, Type, TypeVar
 
 from netqmpi.runtime import Executor
-from netqmpi.runtime.run_config import RunConfig
+from netqmpi.runtime.run_config import RunConfig, read_config_block
+
+_ConfigT = TypeVar("_ConfigT", bound=RunConfig)
+
+
+def _build_config(config_cls: Type[_ConfigT], backend: str, args) -> _ConfigT:
+    """
+    Build a backend config from the ``--config`` YAML file and CLI overrides.
+
+    Reads the generic settings plus the ``backend`` block from the config file
+    (if given), then applies ``--shots`` as an explicit override so a quick
+    command-line run can bump the shot count without editing the file.
+
+    Args:
+        config_cls: The backend's :class:`RunConfig` subclass.
+        backend: Backend name, used to select its block in the config file.
+        args: Parsed CLI arguments (uses ``args.config`` and ``args.shots``).
+
+    Returns:
+        A populated ``config_cls`` instance.
+    """
+    if args.config:
+        config = config_cls.from_dict(read_config_block(args.config, backend))
+    else:
+        config = config_cls()
+    if args.shots is not None:
+        config.shots = args.shots
+    return config
 
 def simulate(
     script: str,
@@ -68,52 +95,60 @@ def main():
     backend_group.add_argument("--netqasm", action="store_true", help="Use NetQASM backend")
     backend_group.add_argument("--cunqa", action="store_true", help="Use CUNQA backend")
     backend_group.add_argument("--aer", action="store_true", help="Use Qiskit AerSimulator backend")
+    backend_group.add_argument("--qoala", action="store_true", help="Use Qoala backend (simulation only)")
 
     parser.add_argument(
-        "--transfer-mode",
-        choices=["swap", "teleport"],
-        default="swap",
-        help="Qubit transfer mode for the Aer backend: 'swap' (default) or 'teleport'",
+        "--shots",
+        type=int,
+        help="Number of shots (overrides the value in --config, if any)",
     )
 
     parser.add_argument(
-        "--shots", 
-        type=int, 
-        help="Number of shots"
+        "--config",
+        type=str,
+        default=None,
+        help="Path to a YAML config file with generic settings and an optional "
+             "per-backend block (e.g. a 'qoala:' block with link_fidelity and a "
+             "'hardware' qdevice section). Replaces per-backend parameter flags.",
     )
 
     # TODO: Turn ON and OFF the timer
-    # TODO: Get specific configurations
 
     args = parser.parse_args()
 
     if args.num_procs < 1:
         parser.error("Number of processes must be at least 1")
-    
-    if args.netqasm:
-        from netqmpi.runtime.adapters.netqasm import NetQASMExecutorAdapter, NetQASMRunConfig
 
-        config = NetQASMRunConfig(shots=(args.shots or 1))
-        executor = NetQASMExecutorAdapter(args.num_procs, config=config)
-    elif args.cunqa:
-        from netqmpi.runtime.adapters.cunqa import CunqaExecutorAdapter, CunqaRunConfig
+    try:
+        if args.netqasm:
+            from netqmpi.runtime.adapters.netqasm import NetQASMExecutorAdapter, NetQASMRunConfig
 
-        config = CunqaRunConfig(shots=(args.shots or 1024))
-        executor = CunqaExecutorAdapter(args.num_procs, config=config)
-    elif args.aer:
-        from netqmpi.runtime.adapters.aer import AerExecutorAdapter, AerSimulatorConfig
+            config = _build_config(NetQASMRunConfig, "netqasm", args)
+            executor = NetQASMExecutorAdapter(args.num_procs, config=config)
+        elif args.cunqa:
+            from netqmpi.runtime.adapters.cunqa import CunqaExecutorAdapter, CunqaRunConfig
 
-        config = AerSimulatorConfig(
-            shots=(args.shots or 1024),
-            transfer_mode=args.transfer_mode,
-        )
-        executor = AerExecutorAdapter(args.num_procs, config=config)
-    else:
-        from netqmpi.runtime.adapters.netqasm import NetQASMExecutorAdapter, NetQASMRunConfig
+            config = _build_config(CunqaRunConfig, "cunqa", args)
+            executor = CunqaExecutorAdapter(args.num_procs, config=config)
+        elif args.aer:
+            from netqmpi.runtime.adapters.aer import AerExecutorAdapter, AerSimulatorConfig
 
-        print("No backend flag; using default (NetQASM)")
-        executor = NetQASMExecutorAdapter(args.num_procs)    
-    
+            config = _build_config(AerSimulatorConfig, "aer", args)
+            executor = AerExecutorAdapter(args.num_procs, config=config)
+        elif args.qoala:
+            from netqmpi.runtime.adapters.qoala import QoalaExecutorAdapter, QoalaRunConfig
+
+            config = _build_config(QoalaRunConfig, "qoala", args)
+            executor = QoalaExecutorAdapter(args.num_procs, config=config)
+        else:
+            from netqmpi.runtime.adapters.netqasm import NetQASMExecutorAdapter, NetQASMRunConfig
+
+            print("No backend flag; using default (NetQASM)")
+            config = _build_config(NetQASMRunConfig, "netqasm", args)
+            executor = NetQASMExecutorAdapter(args.num_procs, config=config)
+    except (ValueError, OSError) as error:
+        parser.error(str(error))
+
     simulate(
         script=args.script,
         num_procs=args.num_procs,

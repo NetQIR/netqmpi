@@ -2,157 +2,255 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/NetQIR/netqmpi/refs/heads/main/logo-light.svg">
     <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/NetQIR/netqmpi/refs/heads/main/logo-dark.svg">
-    <img alt="Shows a black logo in light color mode and a white one in dark color mode." src="https://user-images.githubusercontent.com/25423296/163456779-a8556205-d0a5-45e2-ac17-42d089e3c3f8.png">
+    <img alt="NetQMPI logo." src="https://user-images.githubusercontent.com/25423296/163456779-a8556205-d0a5-45e2-ac17-42d089e3c3f8.png">
   </picture>
 </p>
 
+**NetQMPI** is a Python library that brings the classical **MPI** (Message Passing
+Interface) programming model to **Distributed Quantum Computing (DQC)**. Following
+a Single-Program, Multiple-Data (SPMD) paradigm, the developer writes a single
+script that runs across *N* quantum nodes and coordinates them through
+message-passing primitives — including quantum-aware ones such as `qsend`,
+`qrecv` and quantum collectives — without manually orchestrating low-level
+entanglement, teleportation or classical messaging.
 
-NetQMPI is a Python package that provides a partial implementation of the Quantum Message Passing Interface (QMPI) and a full implementation of the Net Quantum Intermediate Representation (NetQIR) on top of the NetQASM SDK. NetQASM is a high-level framework designed to enable quantum network programming, supporting execution on simulators such as SimulaQron and NetSquid.
-
-Like NetQIR, NetQMPI aims to facilitate distributed quantum computing by enabling the execution of quantum programs across multiple nodes in a quantum network. This sets it apart from NetQASM’s original focus on programming individual quantum network nodes. Inspired by the classical MPI (Message Passing Interface) paradigm, NetQMPI abstracts communication and follows a Single Program Multiple Data (SPMD) model adapted to quantum systems. This allows quantum programmers to develop distributed quantum applications in a style familiar from classical high-performance computing, making distributed quantum programming more accessible, modular, and portable.
+Crucially, NetQMPI is now **backend-agnostic**: the same, unmodified application
+runs on several execution engines (a quantum-network simulator, an HPC emulator,
+a circuit simulator, …) simply by selecting a backend on the command line.
 
 ## Table of Contents
 
-  - [Installation](#Installation)
-  - [Case of use example: send and receive a qubit](#Case-of-use-example-send-and-receive-a-qubit)
-    - [NetQMPI version](#NetQMPI-version)
-    - [NetQASM version](#NetQASM-version)
-  - [Cite this work](#cite-this-work)
+- [Architecture: a decoupled design](#architecture-a-decoupled-design)
+- [Available backends](#available-backends)
+- [Installation](#installation)
+- [Quick start](#quick-start)
+- [Backend hardware configuration (`--config`)](#backend-hardware-configuration---config)
+- [Writing a new backend](#writing-a-new-backend)
+- [Examples](#examples)
+- [Cite this work](#cite-this-work)
+
+## Architecture: a decoupled design
+
+Earlier versions of NetQMPI were implemented directly on top of the NetQASM SDK,
+which tied programs to a single execution stack. NetQMPI has since been
+restructured into a **decoupled architecture** that strictly separates *what* a
+distributed quantum program does from *how* and *where* it runs
+(see [Vázquez-Pérez *et al.*](#cite-this-work)):
+
+<img src="netqmpi-architecture-overview.png" alt="NetQMPI architecture overview" width="800">
+
+- **SDK (user-facing).** Backend-agnostic abstractions: `Environment` (the local
+  node context and a factory for circuits), `Circuit` (a fluent gate + `qsend`/
+  `qrecv` API that records operations into an `OperationContainer`), and the
+  `QMPICommunicator` (rank/size and communication primitives). Application code
+  depends **only** on these.
+- **Runtime (execution-facing).** Selects and drives a concrete backend through
+  the **Adapter pattern + dependency injection**: an `Executor` bootstraps the
+  processes and injects a backend-specific communicator into the `Environment`; a
+  `CircuitAdapter` translates the recorded operations into native backend
+  instructions; a concrete `Communicator` maps ranks and communication onto the
+  platform's resources.
+
+Because the boundary between the two layers is strict, **the same `app.py` runs
+on any backend by switching a flag** — no changes to application logic.
+
+## Available backends
+
+| Backend | CLI flag | What it targets | Key dependencies |
+|---|---|---|---|
+| **NetQASM / SquidASM** | `--netqasm` | Low-level quantum-network simulation (EPR sockets, NetQASM routines) | [`squidasm`](https://github.com/QuTech-Delft/squidasm), [`netsquid`](https://netsquid.org), `netqasm` **1.x** |
+| **CUNQA** | `--cunqa` | HPC emulation of DQC through virtual QPUs (vQPUs) | [`cunqa`](https://arxiv.org/abs/2511.05209) (HPC / Slurm environment) |
+| **Qiskit Aer** | `--aer` | Shot-based circuit simulation (swap- or teleportation-based transfer) | `qiskit`, `qiskit-aer` |
+| **Qoala** | `--qoala` | Quantum-internet **node execution environment** with task scheduling & multitasking — **simulation only** | [`qoala`](https://github.com/QuTech-Delft/qoala-sim), [`netsquid`](https://netsquid.org), `netqasm` **2.x**, Python 3.10–3.12 |
+
+> **NetSquid account.** The NetQASM and Qoala backends depend on
+> [NetSquid](https://netsquid.org), which requires a (free) account and is
+> installed from its private index:
+> `pip install netsquid --extra-index-url https://<user>:<pwd>@pypi.netsquid.org`.
+>
+> **NetQASM 1.x vs 2.x.** The NetQASM/SquidASM backend uses `netqasm` **1.x**,
+> while Qoala uses `netqasm` **2.x**. These are mutually incompatible, so the
+> `--netqasm` and `--qoala` backends must live in **separate environments**
+> (e.g. two conda envs). CUNQA and Aer have no such constraint.
+>
+> **Qoala is simulation-only.** It models the software/hardware architecture of a
+> quantum-internet node on NetSquid; it is not a path to real-hardware execution.
 
 ## Installation
-You can install NetQMPI using pip:
+
+Install the core package with pip:
 
 ```bash
-pip install netqmpi netqasm
+pip install netqmpi
 ```
 
-It is important have installed previously any [NetQASM](https://github.com/QuTech-Delft/netqasm) backend as [SquidASM](https://github.com/QuTech-Delft/squidasm) or [Simulaqron](https://github.com/SoftwareQuTech/SimulaQron). For more information about the installation of NetQASM, please refer to [NetQASM Documentation](https://netqasm.readthedocs.io/en/stable/installation.html).
+Then install the backend(s) you intend to use. Each backend lives behind a lazy
+import, so you only need the dependencies of the backend you actually run.
 
+<details>
+<summary><b>NetQASM / SquidASM backend</b></summary>
 
-## Case of use example: send and receive a qubit
+```bash
+pip install squidasm --extra-index-url https://<user>:<pwd>@pypi.netsquid.org
+# pulls in netsquid and netqasm 1.x
+```
+See the [NetQASM installation docs](https://netqasm.readthedocs.io/en/stable/installation.html).
+</details>
 
-The repository includes a code example demonstrating a simple send/receive interaction between two quantum nodes, following a client-server style pattern. This example serves to highlight the differences between low-level NetQASM programming and the high-level abstraction provided by Net-QMPI.
+<details>
+<summary><b>Qoala backend (separate environment, simulation only)</b></summary>
 
-The comparison is structured as follows:
+```bash
+conda create -n qoala python=3.11 -y
+conda activate qoala
+pip install netsquid --extra-index-url https://<user>:<pwd>@pypi.netsquid.org
+pip install qoala   --extra-index-url https://<user>:<pwd>@pypi.netsquid.org  # netqasm 2.x
+pip install netqmpi
+```
+</details>
 
-- **NetQASM version:** implemented using two separate files, one per node (node0.py and node1.py), where the user must manually manage entanglement generation, classical communication, and teleportation logic.
+<details>
+<summary><b>CUNQA backend (HPC)</b></summary>
 
-- **Net-QMPI version:** implemented using a single file leveraging the NetQMPI API, which automatically handles low-level quantum networking operations (entanglement, measurement corrections, etc.) using a message-passing interface similar to classical MPI.
+Install and configure [CUNQA](https://arxiv.org/abs/2511.05209) on your HPC
+cluster (it provisions vQPUs via the job scheduler), then install `netqmpi` in
+the same environment.
+</details>
 
-### NetQMPI version
+<details>
+<summary><b>Qiskit Aer backend</b></summary>
+
+```bash
+pip install qiskit qiskit-aer
+```
+</details>
+
+## Quick start
+
+NetQMPI is launched with an MPI-like command that selects the number of nodes and
+the backend:
+
+```bash
+netqmpi -n <NUM_NODES> app.py --netqasm            # quantum-network simulation
+netqmpi -n <NUM_NODES> app.py --cunqa --shots 1024 # HPC vQPU emulation
+netqmpi -n <NUM_NODES> app.py --aer   --shots 1024 # circuit simulation
+netqmpi -n <NUM_NODES> app.py --qoala --shots 100  # Qoala node exec. environment
+```
+
+The example below (`examples/netqmpi/send_recv.py`) prepares a qubit in
+superposition on one node and teleports it to a neighbour with `qsend`/`qrecv`.
+It uses **only** SDK abstractions, so the very same file runs on every backend:
+
 ```python
-from netqmpi.sdk.communicator import QMPICommunicator
+from netqmpi.sdk.environment import Environment
 
-def main(comm: QMPICommunicator = None):
-    rank = comm.get_rank()
-    size = comm.get_size()
-    
+def main(env: Environment = None):
+    comm = env.comm
+    rank = comm.rank
+
     next_rank = comm.get_next_rank(rank)
     previous_rank = comm.get_prev_rank(rank)
 
-    with comm:
+    with comm:  # everything inside this block is executed on the backend
         if rank == 0:
-            # Create a qubit |+> to teleport
-            q = comm.create_qubit()
-            q.H()
-
-            comm.qsend([q], next_rank)
+            circuit = env.create_circuit(num_qubits=1, num_clbits=1)
+            circuit.h(0)                          # prepare |+>
+            comm.qsend(circuit, [0], next_rank)   # teleport the qubit
         else:
-            [qubit_recv] = comm.qrecv(previous_rank)
-            measurement = qubit_recv.measure()
-            comm.flush()
-```
-### NetQASM version
-Node 0 (receiver):
+            circuit = env.create_circuit(num_qubits=1, num_clbits=1)
+            comm.qrecv(circuit, [0], previous_rank)
+            circuit.measure(0, 0)
 
-```python
-from netqasm.runtime.settings import Simulator, get_simulator
-from netqasm.sdk import EPRSocket
-from netqasm.sdk.external import NetQASMConnection, Socket, get_qubit_state
-from netqasm.sdk.toolbox.sim_states import get_fidelity, qubit_from, to_dm
+    results = comm.results
 
-
-def main(app_config=None):
-    log_config = app_config.log_config
-
-    # Create a socket to recv classical information
-    socket = Socket("receiver", "sender", log_config=log_config)
-
-    # Create a EPR socket for entanglement generation
-    epr_socket = EPRSocket("sender")
-
-    # Initialize the connection
-    receiver = NetQASMConnection(
-        app_name=app_config.app_name, log_config=log_config, epr_sockets=[epr_socket]
-    )
-    with receiver:
-        epr = epr_socket.recv_keep()[0]
-        receiver.flush()
-
-        # Get the corrections
-        m1, m2 = socket.recv_structured().payload
-        if m2 == 1:
-            epr.X()
-        if m1 == 1:
-            epr.Z()
-
-        receiver.flush()
+    if rank != 0:
+        print(f"measure: {results}")
+    else:
+        print("teleportation complete")
 ```
 
-Node 1 (sender)
-```python
-from netqasm.logging.output import get_new_app_logger
-from netqasm.runtime.settings import Simulator, get_simulator
-from netqasm.sdk import EPRSocket, Qubit
-from netqasm.sdk.classical_communication.message import StructuredMessage
-from netqasm.sdk.external import NetQASMConnection, Socket
-from netqasm.sdk.toolbox import set_qubit_state
-
-
-def main(app_config=None, phi=0.0, theta=0.0):
-    log_config = app_config.log_config
-    app_logger = get_new_app_logger(app_name="sender", log_config=log_config)
-
-    # Create a socket to send classical information
-    socket = Socket("sender", "receiver", log_config=log_config)
-
-    # Create a EPR socket for entanglement generation
-    epr_socket = EPRSocket("receiver")
-
-    # Initialize the connection to the backend
-    sender = NetQASMConnection(
-        app_name=app_config.app_name, log_config=log_config, epr_sockets=[epr_socket]
-    )
-    with sender:
-        # Create a qubit to teleport
-        q = Qubit(sender)
-        set_qubit_state(q, phi, theta)
-
-        # Create EPR pairs
-        epr = epr_socket.create_keep()[0]
-
-        # Teleport
-        q.cnot(epr)
-        q.H()
-        m1 = q.measure()
-        m2 = epr.measure()
-
-    # Send the correction information
-    m1, m2 = int(m1), int(m2)
-
-    socket.send_structured(StructuredMessage("Corrections", (m1, m2)))
-
-    return {"m1": m1, "m2": m2}
+```bash
+netqmpi -n 2 examples/netqmpi/send_recv.py --netqasm
+netqmpi -n 2 examples/netqmpi/send_recv.py --qoala --shots 100
 ```
+
+The programmer only invokes `comm.qsend()` / `comm.qrecv()`; entanglement
+generation, teleportation and classical corrections are handled by the selected
+backend adapter.
+
+## Backend hardware configuration (`--config`)
+
+Backend-specific parameters are passed through a single YAML file with `--config`
+(instead of a proliferation of per-backend flags). The file has generic settings
+at the top level plus an optional block named after the backend; only the block
+for the selected backend is read. For example, configuring the Qoala qdevice and
+its entanglement link:
+
+```yaml
+# config.yaml
+shots: 1000
+seed: 7
+qoala:
+  link_fidelity: 0.8          # EPR-pair fidelity in [0.25, 1.0]
+  hardware:                   # qdevice noise model (omit for a perfect device)
+    t1: 0
+    t2: 0
+    single_qubit_gate_depolar_prob: 0.1
+    two_qubit_gate_depolar_prob: 0.0
+```
+
+```bash
+netqmpi -n 2 app.py --qoala --config config.yaml
+```
+
+## Writing a new backend
+
+Adding a backend **never requires touching the SDK**. Following the architecture
+above, you provide three Runtime components under
+`netqmpi/runtime/adapters/<backend>/` (mirroring the existing `netqasm/`,
+`cunqa/`, `aer/`, `qoala/` packages):
+
+1. **`Executor`** (subclass of `netqmpi.runtime.executor.Executor`) — bootstraps
+   the execution environment, discovers resources, and injects a backend-specific
+   communicator into each node's `Environment` (`build_apps` + `run`).
+2. **`CircuitAdapter`** (subclass of `netqmpi.sdk.circuit.Circuit`) — implements
+   the `_translate_*` hooks that map the abstract operations recorded in the
+   `OperationContainer` (local gates, `measure`, `qsend`/`qrecv`, …) to the
+   backend's native instructions.
+3. **`QMPICommunicator`** (subclass of the abstract communicator) — maps rank /
+   size and the communication primitives onto the backend's real resources, and
+   triggers execution on context exit.
+
+Finally, register a `--<backend>` flag in `netqmpi/runtime/cli.py` (with a lazy
+import so users without that backend's dependencies are unaffected). The
+integration workflow is identical for every backend; only the realization of
+these three components differs.
+
+## Examples
+
+Ready-to-run scripts live in [`examples/netqmpi/`](examples/netqmpi):
+`send_recv.py` (distributed superposition / teleportation), `scatter.py`,
+`gather.py`, `roundrobin.py`, `qft_expose.py`.
+
+Validation experiments for the Qoala backend (hardware-parameter propagation, EPR
+fidelity sweep, and scheduling/multitasking) are documented in
+[`scripts/experiments/`](scripts/experiments).
 
 ## Cite this work
 
 If you use **NetQMPI** in your research, please cite the following works:
 
 > ### NetQMPI: a practical MPI-inspired library for distributed quantum computing over NetQASM SDK
-> **F. Javier Cardama**, **Tomás F. Pena**  
-> *Proceedings of the IEEE International Conference on Cluster Computing (IEEE Cluster 2025)*  
+> **F. Javier Cardama**, **Tomás F. Pena**
+> *Proceedings of the IEEE International Conference on Cluster Computing (IEEE Cluster 2025)*
 > DOI: [10.1109/CLUSTERWorkshops65972.2025.11164201](https://doi.org/10.1109/CLUSTERWorkshops65972.2025.11164201)
+
+---
+
+> ### Emulating NetQMPI applications with CUNQA: A Decoupled Architecture for HPC Environments
+> **Jorge Vázquez-Pérez**, **F. Javier Cardama**, **Tomás F. Pena**, **Andrés Gómez**
+> *Proceedings of the IEEE International Conference on Distributed Computer Systems (ICDCS 2026).*
+> PDF: [PDF Paper](papers/Emulating_NetQMPI_applications_with_CUNQA.pdf)
 
 ---
 

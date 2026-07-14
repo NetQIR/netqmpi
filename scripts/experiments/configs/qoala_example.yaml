@@ -1,0 +1,27 @@
+# Example NetQMPI config for the Qoala backend.
+#
+#   netqmpi -n 2 app.py --qoala --config scripts/experiments/configs/qoala_example.yaml
+#
+# Generic settings live at the top level; backend-specific settings go in a
+# block named after the backend (only the selected backend's block is read).
+# --shots on the command line overrides the value here.
+
+shots: 1000
+seed: 7
+
+qoala:
+  num_qubits_per_node: 2      # physical qubits per node (user qubit + scratch)
+  link_duration: 1000         # ns; EPR generation time
+  link_fidelity: 0.8          # EPR fidelity in [0.25, 1.0]; 1.0 = perfect link
+
+  # Optional qdevice hardware block. Omit it entirely for a perfect qdevice.
+  # Durations in ns; T1 == T2 == 0 means no memory noise.
+  hardware:
+    t1: 0
+    t2: 0
+    single_qubit_gate_time: 5000
+    two_qubit_gate_time: 200000
+    init_time: 5000
+    measure_time: 5000
+    single_qubit_gate_depolar_prob: 0.0
+    two_qubit_gate_depolar_prob: 0.0
