@@ -178,6 +178,74 @@ The programmer only invokes `comm.qsend()` / `comm.qrecv()`; entanglement
 generation, teleportation and classical corrections are handled by the selected
 backend adapter.
 
+### Moving qubits collectively: `qscatter` / `qgather`
+
+`qscatter` and `qgather` are `MPI_Scatter` and `MPI_Gather` with qubits instead
+of bytes. Both are **collective** — every rank of the communicator must call
+them — and **rooted**: the root passes the whole buffer, split into one chunk per
+rank in rank order, and every other rank passes its own chunk. The call returns
+the local qubits holding this rank's share.
+
+Since a quantum state cannot be copied, the chunks are *moved*: each one is
+teleported with the same `qsend`/`qrecv` machinery as above, so the sending side
+does **not** keep the data. After a `qscatter` the root holds only its own chunk
+and the slots it scattered are back in `|0>`; after a `qgather` the contributors
+are left with `|0>` and the data lives on the root alone. The qubits a chunk
+lands on must be in `|0>` when the call is reached, exactly as for a plain
+`qrecv`.
+
+```python
+with comm:
+    if rank == ROOT:
+        # One qubit per rank: rank r gets qubit r, the root keeps its own.
+        circuit = env.create_circuit(num_qubits=size, num_clbits=size)
+        for q in range(size):
+            circuit.x(q)
+        mine = comm.qscatter(circuit, list(range(size)), root=ROOT)
+        circuit.measure_all()
+    else:
+        circuit = env.create_circuit(num_qubits=1, num_clbits=1)
+        mine = comm.qscatter(circuit, [0], root=ROOT)   # lands on qubit 0
+        circuit.measure(mine[0], 0)
+```
+
+Each transfer borrows one communication qubit and two protocol classical bits and
+gives them straight back, so a whole scatter costs the same resources as a single
+`qsend`. `examples/netqmpi/scatter.py` and `examples/netqmpi/gather.py` run the
+two collectives end to end.
+
+### Sharing a control qubit: `expose` / `unexpose`
+
+Moving a qubit is not always what a distributed algorithm needs. When several
+ranks only want to apply gates *controlled* by a remote qubit — the crossing
+rotations of a QFT, for instance — the qubit can stay where it is and be lent to
+them instead, through a shared GHZ state (*telegate*).
+
+`expose` and `unexpose` are **collective**, like an `MPI_Bcast`: every rank of
+the window must call them, and `root` names the rank lending the qubit. The call
+returns the index each rank must use as control — its own data qubit on the root,
+a freshly reserved communication qubit on every receiver — so the gate itself is
+written exactly like a local one:
+
+```python
+with comm:
+    circuit = env.create_circuit(num_qubits=1, num_clbits=1)
+
+    # Rank 1 lends its qubit 0 to rank 0, which drives a CS with it.
+    control = comm.expose(circuit, 0, [0], root=1)
+
+    if rank == 0:
+        circuit.h(0)
+        circuit.cs(control, 0)
+
+    comm.unexpose(circuit, [0], root=1)   # the control goes back untouched
+```
+
+Communication qubits and the classical bits carrying the protocol corrections are
+reserved when a window opens and released when it closes, so windows that do not
+overlap reuse the same resources and user classical bits are never clobbered.
+`examples/netqmpi/qft_expose.py` builds a full 3-rank QFT this way.
+
 ## Backend hardware configuration (`--config`)
 
 Backend-specific parameters are passed through a single YAML file with `--config`
@@ -216,7 +284,11 @@ above, you provide three Runtime components under
 2. **`CircuitAdapter`** (subclass of `netqmpi.sdk.circuit.Circuit`) — implements
    the `_translate_*` hooks that map the abstract operations recorded in the
    `OperationContainer` (local gates, `measure`, `qsend`/`qrecv`, …) to the
-   backend's native instructions.
+   backend's native instructions. Operations deriving from `CollectiveOperation`
+   (`expose`/`unexpose`) are the exception: if the backend expands them into all
+   the participating circuits at once, as CUNQA's cat-entangler does, the adapter
+   translates the ranks jointly, stopping each of them at the matching collective
+   (see `translate_group` in the CUNQA adapter).
 3. **`QMPICommunicator`** (subclass of the abstract communicator) — maps rank /
    size and the communication primitives onto the backend's real resources, and
    triggers execution on context exit.

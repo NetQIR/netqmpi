@@ -200,7 +200,7 @@ class NetQASMCircuitAdapter(Circuit):
             op: Operation container to translate.
         """
         
-        for child in op.flatten():
+        for child in op.children:
             self.translate(child)
 
     def _translate_qsend(self, op: QSend):
@@ -264,50 +264,25 @@ class NetQASMCircuitAdapter(Circuit):
 
     def _translate_qscatter(self, op: QScatter):
         """
-        Translate a quantum scatter operation into CUNQA instructions.
+        Translate a quantum scatter operation into NetQASM instructions.
+
+        The record already holds this rank's half of the exchange as
+        teleportation blocks — sends on the root, receives elsewhere — so
+        translating them in order is the whole scatter.
 
         Args:
             op: Quantum scatter operation to translate.
-
-        Raises:
-            NotImplementedError: Always, because this operation is not yet supported.
         """
-        def netqasm_qscatter():
-            rank = self._comm.rank
-            size = self._comm.size
-
-            if rank == op.sender_rank:
-                chunks = self._list_split(op.qubits, size)
-                for i in range(size):
-                    if i != op.sender_rank:
-                        self.qsend(chunks[i], i)
-            else:
-                self.qrecv(op.qubits, op.sender_rank)
-        
-        self._translated_ops.append(netqasm_qscatter)
+        self._translate_operation_container(op)
 
     def _translate_qgather(self, op: QGather):
         """
-        Translate a quantum gather operation into CUNQA instructions.
+        Translate a quantum gather operation into NetQASM instructions.
 
         Args:
             op: Quantum gather operation to translate.
-
-        Raises:
-            NotImplementedError: Always, because this operation is not yet supported.
         """
-        def netqasm_qgather():
-            rank = self._comm.rank
-            size = self._comm.size
-
-            if rank == op.recv_rank:
-                for i in range(size):
-                    if i != op.recv_rank:
-                        self.qrecv(op.qubits, i)
-            else:
-                self.qsend(op.qubits, op.recv_rank)
-        
-        self._translated_ops.append(netqasm_qgather)
+        self._translate_operation_container(op)
 
     def _translate_expose(self, op: Expose):
         """

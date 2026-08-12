@@ -42,6 +42,17 @@ class OperationContainer(Operation):
     # ------------------------------------------------------------------
 
     @property
+    def children(self) -> List[Union[Operation, OperationContainer]]:
+        """
+        Direct children, leaves and sub-containers alike, in insertion order.
+
+        Unlike :meth:`flatten`, this keeps the nesting: a sub-container
+        comes out whole, so a caller dispatching on the operation type
+        still sees what kind of block it is instead of only its leaves.
+        """
+        return list(self._children)
+
+    @property
     def qubits(self) -> List[int]:
         """Union of all qubit indices across children, in insertion order."""
         seen: list[int] = []

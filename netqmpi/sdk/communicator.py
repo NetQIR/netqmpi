@@ -10,7 +10,7 @@ imported here.
 """
 from __future__ import annotations
 
-from typing import Any, List, Dict
+from typing import Any, List, Dict, Optional
 from abc import ABC, abstractmethod
 
 from netqmpi.sdk.circuit import Circuit
@@ -102,38 +102,112 @@ class QMPICommunicator(ABC):
     # Quantum operations
     # ------------------------------------------------------------------
 
-    def qsend(self, circuit, qubits: List[int], dest_rank: int):
+    def qsend(self, circuit: Circuit, qubits: List[int], dest_rank: int) -> None:
         """
         Send a qubit to the destination rank using teleportation.
+
+        Args:
+            circuit: Circuit holding the qubits to send.
+            qubits: Local qubit indices to send.
+            dest_rank: Destination rank.
         """
         circuit.qsend(qubits, dest_rank)
 
-    def qrecv(self, circuit, qubits: List[int], src_rank: int) -> List[int]:
+    def qrecv(self, circuit: Circuit, qubits: List[int], src_rank: int) -> None:
         """
         Receive a qubit from the source rank using teleportation.
-        """
-        return circuit.qrecv(qubits, src_rank)
 
-    def qscatter(self, qubits: List[int], rank_sender: int) -> List[int]:
-        pass
+        Args:
+            circuit: Circuit receiving the qubits.
+            qubits: Local qubit indices that will hold the incoming state.
+            src_rank: Source rank.
+        """
+        circuit.qrecv(qubits, src_rank)
 
-    def qgather(self, qubits: List[int], rank_recv: int) -> List[int]:
-        pass
+    def qscatter(self, circuit: Circuit, qubits: List[int], root: int) -> List[int]:
+        """
+        Scatter the qubits of the root across every rank.
 
-    def expose(self, qubits: List[int], rank: int = 0):
+        Collective call, like ``MPI_Scatter``: every rank of the
+        communicator has to reach it. The root passes its whole buffer,
+        split into one chunk per rank in rank order; every other rank
+        passes the local qubits its chunk lands on. The transfers move the
+        qubits, so the root is left holding only its own chunk.
+
+        Args:
+            circuit: Circuit of the calling rank.
+            qubits: The whole buffer on the root, this rank's landing
+                qubits elsewhere.
+            root: Rank whose buffer is scattered.
+
+        Returns:
+            The local qubits holding this rank's chunk.
         """
-        Expose qubits to the network.
-        :param qubits: List of qubits to expose.
-        :param rank: Exposer rank
+        return circuit.qscatter(qubits, root)
+
+    def qgather(self, circuit: Circuit, qubits: List[int], root: int) -> List[int]:
         """
-        pass
-    def unexpose(self, rank: int = 0):
+        Gather the qubits of every rank into the root.
+
+        Collective call, like ``MPI_Gather``, and the mirror image of
+        :meth:`qscatter`: the root passes the whole buffer the chunks land
+        on, every other rank the qubits it contributes. Here too the
+        qubits are moved, so the contributors are left with theirs back in
+        ``|0⟩``.
+
+        Args:
+            circuit: Circuit of the calling rank.
+            qubits: The whole buffer on the root, this rank's contribution
+                elsewhere.
+            root: Rank the qubits are gathered into.
+
+        Returns:
+            The whole buffer on the root, this rank's contribution elsewhere.
         """
-        Unexpose qubits from the network.
-        :param rank: Exposer rank
-        :return: None
+        return circuit.qgather(qubits, root)
+
+    def expose(
+        self,
+        circuit: Circuit,
+        qubit: Optional[int],
+        ranks: List[int],
+        root: Optional[int] = None,
+    ) -> Optional[int]:
         """
-        pass
+        Open a telegate window sharing a control qubit across ranks.
+
+        Collective call: every rank in ``[root] + ranks`` must reach it.
+        The root lends the state of ``qubit`` to the other participants,
+        each of which gets back the index of a local communication qubit
+        carrying that control until the matching :meth:`unexpose`.
+
+        Args:
+            circuit: Circuit of the calling rank.
+            qubit: Data qubit to expose. Read on the root only.
+            ranks: Ranks the qubit is exposed to.
+            root: Rank exposing its qubit. Defaults to the calling rank.
+
+        Returns:
+            The qubit index this rank must use as control, or ``None`` if
+            it does not take part in the window.
+        """
+        return circuit.expose(qubit, ranks, root=root)
+
+    def unexpose(
+        self,
+        circuit: Circuit,
+        ranks: List[int],
+        root: Optional[int] = None,
+    ) -> None:
+        """
+        Close the telegate window opened by the matching :meth:`expose`.
+
+        Args:
+            circuit: Circuit of the calling rank.
+            ranks: Ranks the qubit was exposed to.
+            root: Rank that exposed its qubit. Defaults to the calling rank.
+        """
+        circuit.unexpose(ranks, root=root)
 
 
     # ------------------------------------------------------------------

@@ -15,7 +15,10 @@ from cunqa.qpu import qraise, get_QPUs, qdrop
 from netqmpi.runtime.executor import Executor
 from netqmpi.sdk.environment import Environment
 from netqmpi.runtime.adapters.cunqa.cunqa_circuit import CunqaCircuitAdapter
-from netqmpi.runtime.adapters.cunqa.cunqa_communicator import CunqaCommunicator
+from netqmpi.runtime.adapters.cunqa.cunqa_communicator import (
+    CunqaCommunicator,
+    CunqaSession,
+)
 from netqmpi.runtime.run_config import RunConfig
 from netqmpi.helpers import load_main  
 
@@ -34,7 +37,7 @@ class CunqaRunConfig(RunConfig):
             instruction logging.
     """
 
-    simulator: str = "Aer"
+    simulator: str = "Munich"
     time: str = "00:10:00"
     
 
@@ -91,17 +94,30 @@ class CunqaExecutorAdapter(Executor):
         main_func = load_main(file)
 
         try:
-            self._family = qraise(size, "00:10:00", simulator="Aer", co_located=True, quantum_comm=True)
+            backend_path = "/mnt/netapp1/Store_CESGA/home/cesga/jvazquez/works/cunqisms/netqmpi_cunqa/netqmpi/examples/netqmpi/qft_expose.json"
+            self._family = qraise(
+                size,
+                self._config.time,
+                simulator=self._config.simulator,
+                co_located=True,
+                quantum_comm=True,
+                backend=backend_path
+            )
             qpus  = get_QPUs(co_located = True, family = self._family)
         except Exception as error:
             raise error
 
+        # One session shared by every rank: the ranks trace one after the
+        # other, but their circuits are translated and submitted together.
+        session = CunqaSession(size, qpus[:size], self._config)
+
         apps = []
-        for rank, qpu in enumerate(qpus):
-            env = Environment(CunqaCommunicator(rank, size, qpu, self._config), self)
+        for rank, qpu in enumerate(qpus[:size]):
+            comm = CunqaCommunicator(rank, size, qpu, self._config, session=session)
+            env = Environment(comm, self)
             wrapped_main = lambda env=env: main_func(env=env)
             apps.append(wrapped_main)
-        
+
         return apps
         
     def run(self, apps: Any) -> None:
@@ -123,7 +139,9 @@ class CunqaExecutorAdapter(Executor):
             Exception: Propagates any exception raised during backend setup,
                 circuit execution, result gathering, or resource cleanup.
         """
-        for app in apps:
-            app()
-            
-        qdrop(self._family)
+        try:
+            for app in apps:
+                app()
+        finally:
+            # Relinquish the vQPUs even if a rank failed while tracing.
+            qdrop(self._family)
