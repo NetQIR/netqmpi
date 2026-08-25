@@ -13,7 +13,7 @@ receivers the communication qubit now carrying that control.
 
 Run with::
 
-    netqmpi -n 3 --cunqa qft_expose.py
+    netqmpi -n 3 --cunqa 5_qft_expose.py
 """
 import numpy as np
 from netqmpi.sdk.environment import Environment

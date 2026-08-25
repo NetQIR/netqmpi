@@ -9,6 +9,9 @@ setup(
         ],
     },
     packages=find_packages(),
+    install_requires=[
+        'pyyaml>=5.1',      # --config parsing
+    ],
     extras_require={
         'test': ['pytest>=7.0'],
     },

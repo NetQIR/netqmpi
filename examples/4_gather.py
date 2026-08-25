@@ -12,7 +12,7 @@ returns, and the data lives on the root alone.
 
 Run with::
 
-    netqmpi -n 3 --cunqa gather.py
+    netqmpi -n 3 --cunqa 4_gather.py
 """
 from netqmpi.sdk.environment import Environment
 

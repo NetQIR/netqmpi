@@ -496,6 +496,29 @@ def _emit_unexpose(
     )
 
 
+def idle_circuit(index: int) -> CunqaCircuit:
+    """
+    Build the trivial circuit sent to a vQPU that no rank is using.
+
+    CUNQA runs one executor per family of vQPUs, and every round that
+    executor waits for a circuit from *each* vQPU of the family before it
+    runs anything: a vQPU left out does not sit idle, it holds up the whole
+    family. A run with fewer ranks than the family has vQPUs therefore
+    submits this circuit to each of the spare ones, which does nothing, is
+    over immediately, and whose counts are discarded.
+
+    Args:
+        index: Position of the spare vQPU, used to give the circuit an id
+            of its own.
+
+    Returns:
+        A one-qubit circuit holding a single measurement.
+    """
+    circuit = CunqaCircuit((1, 0), 1, id=f"netqmpi_idle_{index}")
+    circuit.measure(0, 0)
+    return circuit
+
+
 def translate_group(adapters: Dict[int, CunqaCircuitAdapter]) -> List[CunqaCircuit]:
     """
     Translate the circuits of a whole group of ranks into CUNQA circuits.

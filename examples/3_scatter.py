@@ -15,7 +15,7 @@ states moved to, not on the root.
 
 Run with::
 
-    netqmpi -n 3 --cunqa scatter.py
+    netqmpi -n 3 --cunqa 3_scatter.py
 """
 from netqmpi.sdk.environment import Environment
 

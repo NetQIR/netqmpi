@@ -137,7 +137,7 @@ netqmpi -n <NUM_NODES> app.py --aer   --shots 1024 # circuit simulation
 netqmpi -n <NUM_NODES> app.py --qoala --shots 100  # Qoala node exec. environment
 ```
 
-The example below (`examples/netqmpi/send_recv.py`) prepares a qubit in
+The example below (`examples/1_send_recv.py`) prepares a qubit in
 superposition on one node and teleports it to a neighbour with `qsend`/`qrecv`.
 It uses **only** SDK abstractions, so the very same file runs on every backend:
 
@@ -170,8 +170,8 @@ def main(env: Environment = None):
 ```
 
 ```bash
-netqmpi -n 2 examples/netqmpi/send_recv.py --netqasm
-netqmpi -n 2 examples/netqmpi/send_recv.py --qoala --shots 100
+netqmpi -n 2 examples/1_send_recv.py --netqasm
+netqmpi -n 2 examples/1_send_recv.py --qoala --shots 100
 ```
 
 The programmer only invokes `comm.qsend()` / `comm.qrecv()`; entanglement
@@ -211,7 +211,7 @@ with comm:
 
 Each transfer borrows one communication qubit and two protocol classical bits and
 gives them straight back, so a whole scatter costs the same resources as a single
-`qsend`. `examples/netqmpi/scatter.py` and `examples/netqmpi/gather.py` run the
+`qsend`. `examples/3_scatter.py` and `examples/4_gather.py` run the
 two collectives end to end.
 
 ### Sharing a control qubit: `expose` / `unexpose`
@@ -244,7 +244,7 @@ with comm:
 Communication qubits and the classical bits carrying the protocol corrections are
 reserved when a window opens and released when it closes, so windows that do not
 overlap reuse the same resources and user classical bits are never clobbered.
-`examples/netqmpi/qft_expose.py` builds a full 3-rank QFT this way.
+`examples/5_qft_expose.py` builds a full 3-rank QFT this way.
 
 ## Backend hardware configuration (`--config`)
 
@@ -270,6 +270,53 @@ qoala:
 ```bash
 netqmpi -n 2 app.py --qoala --config config.yaml
 ```
+
+### CUNQA: which vQPUs the run uses
+
+A run needs one vQPU per rank, and by default it expects them to be **already
+raised**, so one allocation can serve many runs:
+
+```bash
+qraise -n 3 -t 00:10:00 --quantum_comm --co-located    # once
+netqmpi -n 3 examples/3_scatter.py --cunqa       # as often as you like
+```
+
+The family may hold **more** vQPUs than the run needs — three raised, `-n 2`
+run — and the extra ones cost the program nothing. CUNQA runs a single executor
+per family and it starts a round only once *every* vQPU of that family has
+submitted something, so a vQPU left out would not sit idle, it would hang the
+run; NetQMPI hands each spare one a trivial circuit instead and discards its
+counts.
+
+What a run cannot do is spread across families, since each family is executed
+on its own. If vQPUs of several families are up, name the one to use with
+`family:` in the `cunqa` block.
+
+If there are no vQPUs up at all, the run stops before building anything and
+says what to raise.
+
+To have NetQMPI raise them for the run and drop them again afterwards, ask for
+it in the `cunqa` block. `backend` is the vQPU definition file the vQPUs are
+raised with, which is what fixes the qubit budget of the run:
+
+```yaml
+# cunqa.yaml
+shots: 1024
+cunqa:
+  qraise: true                                # raise for this run, drop after it
+  backend: examples/qft_expose.json   # vQPU definition (qubit budget)
+  time: "00:10:00"                            # SLURM reservation
+  simulator: Munich
+```
+
+```bash
+netqmpi -n 3 examples/3_scatter.py --cunqa --config cunqa.yaml
+```
+
+`family` picks which raised vQPUs to attach to, or names the family to raise,
+and `co_located` has to match how they were raised. `backend`, `time` and
+`simulator` only mean anything when `qraise: true`, so setting them while
+attaching to running vQPUs is reported rather than silently ignored.
 
 ## Writing a new backend
 
@@ -300,9 +347,13 @@ these three components differs.
 
 ## Examples
 
-Ready-to-run scripts live in [`examples/netqmpi/`](examples/netqmpi):
-`send_recv.py` (distributed superposition / teleportation), `scatter.py`,
-`gather.py`, `roundrobin.py`, `qft_expose.py`.
+Ready-to-run scripts live in [`examples/`](examples):
+`1_send_recv.py` (distributed superposition / teleportation),
+`2_round_robin.py`, `3_scatter.py`, `4_gather.py`, `5_qft_expose.py`.
+
+[`examples/frequent_errors/`](examples/frequent_errors) collects programs that are
+*meant* to fail, one failure mode each, with a `run_all.py` that reports what
+NetQMPI says about every one of them without needing any vQPU.
 
 Validation experiments for the Qoala backend (hardware-parameter propagation, EPR
 fidelity sweep, and scheduling/multitasking) are documented in

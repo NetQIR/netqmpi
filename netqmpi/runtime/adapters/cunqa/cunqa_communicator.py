@@ -13,7 +13,7 @@ traced: each of them records its circuits, and the last one to leave its
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from netqmpi.sdk import QMPICommunicator
 from netqmpi.runtime.run_config import RunConfig
@@ -38,13 +38,20 @@ class CunqaSession:
     Attributes:
         size: Number of ranks in the run.
         qpus: vQPUs backing the ranks, ordered by rank.
+        idle_qpus: vQPUs of the same family that no rank is using.
         config: Run configuration shared by every rank.
         communicators: Communicator of each rank, keyed by rank.
         finished: Ranks that are done tracing.
         results: Counts of every rank, keyed by rank, once the run is over.
     """
 
-    def __init__(self, size: int, qpus: List[QPU], config: RunConfig) -> None:
+    def __init__(
+        self,
+        size: int,
+        qpus: List[QPU],
+        config: RunConfig,
+        idle_qpus: Optional[List[QPU]] = None,
+    ) -> None:
         """
         Initialize the session.
 
@@ -52,9 +59,13 @@ class CunqaSession:
             size: Number of ranks in the run.
             qpus: vQPUs backing the ranks, ordered by rank.
             config: Run configuration shared by every rank.
+            idle_qpus: vQPUs of the same family that no rank is using, and
+                which have to be kept busy anyway so the family's executor
+                is not left waiting for them.
         """
         self.size = size
         self.qpus = qpus
+        self.idle_qpus = list(idle_qpus or [])
         self.config = config
         self.communicators: Dict[int, CunqaCommunicator] = {}
         self.finished: set = set()
@@ -167,7 +178,10 @@ class CunqaCommunicator(QMPICommunicator):
                 circuits, since their circuits could not then be paired.
         """
         # Local import: the circuit adapter imports this module.
-        from netqmpi.runtime.adapters.cunqa.cunqa_circuit import translate_group
+        from netqmpi.runtime.adapters.cunqa.cunqa_circuit import (
+            idle_circuit,
+            translate_group,
+        )
 
         session = self._session
         communicators = session.communicators
@@ -185,7 +199,18 @@ class CunqaCommunicator(QMPICommunicator):
             group = {r: communicators[r].circuits[index] for r in ranks}
             cunqa_circuits = translate_group(group)
 
-            qjobs = run(cunqa_circuits, session.qpus, shots=session.config.shots)
+            # A vQPU of the family that no rank is using still has to submit
+            # something: its executor waits for a circuit from every vQPU it
+            # was raised with before running the round. The spare ones get a
+            # trivial circuit, and their counts are dropped by the zip below,
+            # which stops at the last rank.
+            fillers = [idle_circuit(i) for i in range(len(session.idle_qpus))]
+
+            qjobs = run(
+                cunqa_circuits + fillers,
+                session.qpus + session.idle_qpus,
+                shots=session.config.shots,
+            )
             for rank, result in zip(ranks, gather(qjobs)):
                 per_group[rank].append(result.counts)
 

@@ -35,7 +35,7 @@ circuits actually run come out clean there, and the harness says so.
 | `unsupported_gate.py` | Operation the backend cannot express | translation | `NotImplementedError: Barrier is not implemented for the CUNQA backend.` |
 | `dangling_qsend.py` | `qsend` with no matching `qrecv` | run | CUNQA's `Deadlock: every pending quantum task is blocked (circular SEND/RECV or unsatisfiable entanglement).` |
 | `gather_disagreeing_chunks.py` | Ranks disagree on the chunk size | run | the same CUNQA deadlock, naming no NetQMPI call |
-| `exceeds_qpu_qubits.py` | Circuit larger than the vQPU slice | never | **nothing** -- the counts are silently wrong |
+| `exceeds_qpu_qubits.py` | Circuit needs more qubits than the vQPU has | run | CUNQA's `ValueError: Not enough data qubits in the QPU for the circuit.`, naming no rank and no numbers |
 
 The three tiers matter more than the individual messages:
 

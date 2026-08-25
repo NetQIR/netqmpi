@@ -1,12 +1,13 @@
 """Asks for more qubits than the vQPU was raised with.
 
-The executor gives each rank a fixed slice of the merged register, sized
-by the backend definition passed to qraise (4 data + 4 comm qubits in the
-file the adapter currently hardcodes). A circuit that needs more spills
-into the next rank's qubits.
+The vQPUs are raised from a definition file that fixes how many data and
+communication qubits each of them has (4 and 4 in the file the examples
+use). A circuit that needs more cannot be placed on one.
 
-Layer: CUNQA runtime (needs vQPUs).
-Expected: today, no error at all -- the counts are simply wrong.
+Layer: CUNQA, when the circuits are submitted (needs vQPUs).
+Expected: CUNQA refuses the job with "Not enough data qubits in the QPU
+for the circuit." -- which says neither how many were needed, nor how many
+there are, nor which rank asked.
 
     netqmpi -n 2 --cunqa exceeds_qpu_qubits.py
 """
