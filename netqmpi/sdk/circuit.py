@@ -923,7 +923,8 @@ class Circuit(ABC):
         qubits: List[int],
         root: int,
         what: str,
-    ) -> Tuple[int, List[int], List[List[int]]]:
+        holders: List[int],
+    ) -> Tuple[int, List[int], Dict[int, List[int]]]:
         """
         Validate a rooted transfer and split the root's buffer.
 
@@ -931,23 +932,29 @@ class Circuit(ABC):
             qubits: Local qubits the caller passed to the collective.
             root: Rank the qubits are scattered from or gathered into.
             what: Name of the collective, used in the error messages.
+            holders: Ranks the root's buffer is split among, in the order
+                their chunks appear in it.
 
         Returns:
-            A tuple ``(root, ranks, chunks)``, where ``chunks`` holds one
-            list of local qubit indices per rank on the root and is empty
-            elsewhere.
+            A tuple ``(root, ranks, chunks)``, where ``ranks`` lists every
+            rank of the communicator and ``chunks`` maps each holder to its
+            chunk of the root's buffer. The mapping is empty outside the
+            root, the only rank that sees the whole buffer.
 
         Raises:
             IndexError: If a qubit index is not a data qubit of this rank.
             ValueError: If the root is not a rank of the communicator, if
-                the buffer is empty, or if the root's buffer does not
-                split evenly among the ranks.
+                there is no rank to split the buffer among, if the buffer
+                is empty, or if it does not split evenly among the holders.
         """
         size = self._comm.size
         if not (0 <= root < size):
             raise ValueError(
                 f"{what} root {root} is not a rank of the communicator "
                 f"[0, {size}).")
+        if not holders:
+            raise ValueError(
+                f"{what} needs at least one rank besides the root ({root}).")
         if not isinstance(qubits, list) or not qubits:
             raise ValueError(f"{what} needs a non-empty list of qubits.")
         for q in qubits:
@@ -957,31 +964,37 @@ class Circuit(ABC):
 
         ranks = list(range(size))
         if self._comm.rank != root:
-            return root, ranks, []
+            return root, ranks, {}
 
-        if len(qubits) % size:
+        if len(qubits) % len(holders):
             raise ValueError(
-                f"the root of a {what} must hold one chunk per rank: "
-                f"{len(qubits)} qubits do not split evenly among {size} ranks.")
-        step = len(qubits) // size
-        return root, ranks, [qubits[r * step:(r + 1) * step] for r in ranks]
+                f"the root of a {what} must hold one chunk per receiving rank: "
+                f"{len(qubits)} qubits do not split evenly among "
+                f"{len(holders)} ranks.")
+        step = len(qubits) // len(holders)
+        return root, ranks, {
+            holder: qubits[i * step:(i + 1) * step]
+            for i, holder in enumerate(holders)
+        }
 
     def qscatter(self, qubits: List[int], root: int) -> List[int]:
         """
-        Scatter the qubits of the root across every rank.
+        Scatter the qubits of the root among the other ranks.
 
-        Collective call, like ``MPI_Scatter``: every rank of the
-        communicator must reach it. The root passes its whole buffer,
-        which is split into one chunk per rank in rank order, and every
-        other rank passes the local qubits its chunk is to land on — as
-        many as the root reserved for it.
+        Collective call: every rank of the communicator must reach it. The
+        root passes its whole buffer, which is split into one chunk per
+        *other* rank in rank order, and each of those ranks passes the
+        local qubits its chunk is to land on — as many as the root reserved
+        for it.
 
-        Qubits are *moved*, not copied: the chunks leaving the root are
-        teleported away, so once the call is over the root only holds its
-        own chunk and the qubits it scattered are back in ``|0⟩``. The
-        qubits a chunk lands on must be in ``|0⟩`` when the call is
-        reached, as they must be for a plain :meth:`qrecv`: whatever they
-        held is not saved anywhere, it is destroyed by the transfer.
+        Unlike ``MPI_Scatter``, the root keeps no chunk of its own: the
+        buffer is shared out among the other ranks only, so a root
+        scattering two qubits over two ranks is left holding none of them.
+        Qubits are *moved*, not copied: the whole buffer is teleported
+        away, and the root's qubits are back in ``|0⟩`` once the call
+        returns. The qubits a chunk lands on must be in ``|0⟩`` when the
+        call is reached, as they must be for a plain :meth:`qrecv`:
+        whatever they held is not saved anywhere, the transfer destroys it.
 
         Args:
             qubits: The whole buffer on the root, this rank's landing
@@ -989,22 +1002,23 @@ class Circuit(ABC):
             root: Rank whose buffer is scattered.
 
         Returns:
-            The local qubits holding this rank's chunk.
+            The local qubits holding this rank's chunk: the ones passed in
+            on every rank but the root, and an empty list on the root,
+            which keeps nothing.
 
         Raises:
             IndexError: If a qubit index is not a data qubit of this rank.
             ValueError: If the root is not a rank of the communicator, if
-                the buffer is empty, or if the root's buffer does not
-                split evenly among the ranks.
+                it is the only rank, if the buffer is empty, or if it does
+                not split evenly among the other ranks.
         """
         rank = self._comm.rank
-        root, ranks, chunks = self._rooted_chunk(qubits, root, "qscatter")
+        receivers = [r for r in range(self._comm.size) if r != root]
+        root, ranks, chunks = self._rooted_chunk(qubits, root, "qscatter", receivers)
 
         record = QScatter(rank=rank, root=root, ranks=ranks, qubits=qubits)
         if rank == root:
-            for other in ranks:
-                if other == root:
-                    continue
+            for other in receivers:
                 for q in chunks[other]:
                     record.add(self._teledata_send(q, other))
         else:
@@ -1012,7 +1026,7 @@ class Circuit(ABC):
                 record.add(self._teledata_recv(q, root))
 
         self._add(record)
-        return list(chunks[root]) if rank == root else list(qubits)
+        return [] if rank == root else list(qubits)
 
     def qgather(self, qubits: List[int], root: int) -> List[int]:
         """
@@ -1046,7 +1060,9 @@ class Circuit(ABC):
                 split evenly among the ranks.
         """
         rank = self._comm.rank
-        root, ranks, chunks = self._rooted_chunk(qubits, root, "qgather")
+        holders = list(range(self._comm.size))
+        root, ranks, chunks = self._rooted_chunk(
+            qubits, root, "qgather", holders)
 
         record = QGather(rank=rank, root=root, ranks=ranks, qubits=qubits)
         if rank == root:

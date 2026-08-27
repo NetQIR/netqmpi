@@ -378,14 +378,14 @@ class RootedTransfer(OperationContainer):
 
 class QScatter(RootedTransfer):
     """
-    Scatter the qubits held by the root across every rank.
+    Scatter the qubits held by the root among the other ranks.
 
-    This is ``MPI_Scatter`` with qubits instead of bytes: the root's
-    buffer is split into one chunk per rank, in rank order, and rank *r*
-    ends up holding chunk *r*. Handing a qubit over means *moving* it, so
-    every chunk but the root's own is teleported away and the root is
-    left with those qubits back in ``|0⟩``: after the call the data it
-    scattered lives only on the receivers.
+    ``MPI_Scatter`` with qubits instead of bytes, save for one thing: the
+    root keeps no chunk of its own. Its buffer is split into one chunk per
+    *other* rank, in rank order, and handing a qubit over means *moving*
+    it, so the whole buffer is teleported away and the root is left with
+    its qubits back in ``|0⟩``. After the call the data it scattered lives
+    on the receivers alone.
 
     Attributes:
         rank   (int):       Rank owning this record.

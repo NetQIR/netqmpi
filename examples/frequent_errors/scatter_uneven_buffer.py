@@ -1,4 +1,4 @@
-"""Scatters a buffer that does not split evenly among the ranks.
+"""Scatters a buffer that does not split evenly among the receivers.
 
 Layer: SDK, while tracing.        Raised by: Circuit._rooted_chunk
 Expected: ValueError with the buffer size and the number of ranks.
@@ -17,8 +17,8 @@ def main(env: Environment = None):
 
     with comm:
         if rank == ROOT:
-            circuit = env.create_circuit(num_qubits=4, num_clbits=4)
-            comm.qscatter(circuit, [0, 1, 2, 3], root=ROOT)   # 4 qubits, 3 ranks
+            circuit = env.create_circuit(num_qubits=3, num_clbits=3)
+            comm.qscatter(circuit, [0, 1, 2], root=ROOT)   # 3 qubits, 2 receivers
             circuit.measure_all()
         else:
             circuit = env.create_circuit(num_qubits=1, num_clbits=1)

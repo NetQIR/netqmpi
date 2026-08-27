@@ -182,30 +182,33 @@ backend adapter.
 
 `qscatter` and `qgather` are `MPI_Scatter` and `MPI_Gather` with qubits instead
 of bytes. Both are **collective** — every rank of the communicator must call
-them — and **rooted**: the root passes the whole buffer, split into one chunk per
-rank in rank order, and every other rank passes its own chunk. The call returns
-the local qubits holding this rank's share.
+them — and **rooted**: the root passes the whole buffer and every other rank
+passes its own chunk. The call returns the local qubits holding this rank's
+share.
 
 Since a quantum state cannot be copied, the chunks are *moved*: each one is
 teleported with the same `qsend`/`qrecv` machinery as above, so the sending side
-does **not** keep the data. After a `qscatter` the root holds only its own chunk
-and the slots it scattered are back in `|0>`; after a `qgather` the contributors
-are left with `|0>` and the data lives on the root alone. The qubits a chunk
-lands on must be in `|0>` when the call is reached, exactly as for a plain
-`qrecv`.
+does **not** keep the data. That is also where `qscatter` parts company with
+`MPI_Scatter`: the root's buffer is split into one chunk per rank **other than
+the root**, which keeps nothing back — scatter two qubits over two other ranks
+and the root ends up empty-handed, its slots back in `|0>`. A `qgather` is the
+other way round: the root's buffer has one slot per rank, its own contribution
+already in place, and the contributors are left with `|0>` once their qubits
+have moved. The qubits a chunk lands on must be in `|0>` when the call is
+reached, exactly as for a plain `qrecv`.
 
 ```python
 with comm:
     if rank == ROOT:
-        # One qubit per rank: rank r gets qubit r, the root keeps its own.
-        circuit = env.create_circuit(num_qubits=size, num_clbits=size)
-        for q in range(size):
+        # One qubit for each of the other ranks; the root gives them all away.
+        circuit = env.create_circuit(num_qubits=size - 1, num_clbits=size - 1)
+        for q in range(size - 1):
             circuit.x(q)
-        mine = comm.qscatter(circuit, list(range(size)), root=ROOT)
-        circuit.measure_all()
+        comm.qscatter(circuit, list(range(size - 1)), root=ROOT)
+        circuit.measure_all()                          # reads 0 everywhere
     else:
         circuit = env.create_circuit(num_qubits=1, num_clbits=1)
-        mine = comm.qscatter(circuit, [0], root=ROOT)   # lands on qubit 0
+        mine = comm.qscatter(circuit, [0], root=ROOT)  # lands on qubit 0
         circuit.measure(mine[0], 0)
 ```
 
@@ -312,6 +315,26 @@ cunqa:
 ```bash
 netqmpi -n 3 examples/3_scatter.py --cunqa --config cunqa.yaml
 ```
+
+Size that definition to what the program needs. The executor simulates the
+whole family in **one register**, spanning every qubit each vQPU declares
+whether the circuits use it or not, so the cost of a run is set by
+`num_qubits` × the number of ranks — not by the circuits. With a statevector
+simulator that register is 2^N amplitudes:
+
+| vQPU definition | `-n 2` | `-n 3` | `-n 4` | `-n 5` |
+|---|---|---|---|---|
+| `[4, 4]` — 8 qubits each | 1 MiB | 256 MiB | 64 GiB | 16 TiB |
+| `[3, 2]` — 5 qubits each | 16 KiB | 512 KiB | 16 MiB | 512 MiB |
+
+That is why `simulator` matters. NetQMPI defaults to `Munich`, whose decision
+diagrams keep a mostly-idle register small, so oversized vQPUs go unnoticed.
+CUNQA's own default, `Aer`, allocates the dense statevector and reinitialises
+it once per shot, so the same program on generous vQPUs turns into a run that
+never seems to finish — it is waiting on the simulator, not deadlocked.
+`examples/cunqa_backend.json` is sized for the examples and runs on either.
+It fits them all up to three ranks; `4_gather.py`'s root holds one qubit per
+rank, so a four-rank run of it wants `[4, 2]`.
 
 `family` picks which raised vQPUs to attach to, or names the family to raise,
 and `co_located` has to match how they were raised. `backend`, `time` and

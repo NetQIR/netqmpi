@@ -126,13 +126,14 @@ class QMPICommunicator(ABC):
 
     def qscatter(self, circuit: Circuit, qubits: List[int], root: int) -> List[int]:
         """
-        Scatter the qubits of the root across every rank.
+        Scatter the qubits of the root among the other ranks.
 
-        Collective call, like ``MPI_Scatter``: every rank of the
-        communicator has to reach it. The root passes its whole buffer,
-        split into one chunk per rank in rank order; every other rank
-        passes the local qubits its chunk lands on. The transfers move the
-        qubits, so the root is left holding only its own chunk.
+        Collective call: every rank of the communicator has to reach it.
+        The root passes its whole buffer, split into one chunk per *other*
+        rank in rank order; each of those ranks passes the local qubits its
+        chunk lands on. The transfers move the qubits, and unlike
+        ``MPI_Scatter`` the root keeps no chunk: it ends the call holding
+        none of what it scattered.
 
         Args:
             circuit: Circuit of the calling rank.
@@ -141,7 +142,7 @@ class QMPICommunicator(ABC):
             root: Rank whose buffer is scattered.
 
         Returns:
-            The local qubits holding this rank's chunk.
+            The local qubits holding this rank's chunk, empty on the root.
         """
         return circuit.qscatter(qubits, root)
 

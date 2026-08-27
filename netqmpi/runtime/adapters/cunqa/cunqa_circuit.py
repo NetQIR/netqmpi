@@ -21,7 +21,8 @@ at run time, so they need no joint expansion.
 import os, sys
 sys.path.append(os.getenv("HOME"))
 
-from typing import Any, Dict, List, Optional
+from collections import Counter
+from typing import Any, Dict, List, Optional, Tuple
 
 from cunqa.circuit import CunqaCircuit
 from cunqa.qc_protocols import qsend, qrecv, cat_entangler, cat_disentangler
@@ -519,6 +520,181 @@ def idle_circuit(index: int) -> CunqaCircuit:
     return circuit
 
 
+def check_transfers(adapters: Dict[int, CunqaCircuitAdapter]) -> None:
+    """
+    Check that every point-to-point transfer of the group has both halves.
+
+    A ``qsend`` and its ``qrecv`` are paired at run time by the tag both
+    sides derive from the ranks involved, so a transfer whose other half
+    was never traced is not an error CUNQA can report: the vQPU that made
+    the call simply waits for a partner that never comes, and the run hangs
+    with nothing to show for it. Reading the group's own records is enough
+    to see it coming, and to say which rank is left waiting for what.
+
+    Only the backend-agnostic records are read, so any backend that pairs
+    its transfers by tag can use this as it stands.
+
+    Args:
+        adapters: Circuit adapter of every rank, keyed by rank.
+
+    Raises:
+        RuntimeError: If a ``qsend`` has no matching ``qrecv``, or a
+            ``qrecv`` no matching ``qsend``.
+    """
+    ranks = sorted(adapters)
+    sends: Dict[str, Tuple[int, QSend]] = {}
+    recvs: Dict[str, Tuple[int, QRecv]] = {}
+    for rank in ranks:
+        for op in adapters[rank].ops.flatten():
+            if isinstance(op, QSend):
+                sends[op.tag] = (rank, op)
+            elif isinstance(op, QRecv):
+                recvs[op.tag] = (rank, op)
+
+    # How many transfers each ordered pair of ranks traced, so a mismatch
+    # can be reported as the count it is rather than as one lone qubit.
+    sent = Counter((rank, op.dest_rank) for rank, op in sends.values())
+    received = Counter((op.src_rank, rank) for rank, op in recvs.values())
+
+    def outside(rank: int) -> str:
+        return (f"rank {rank} is not one of the {len(ranks)} ranks of this run "
+                f"{ranks}")
+
+    def plural(count: int, call: str) -> str:
+        return f"{count} {call}" + ("" if count == 1 else "s")
+
+    def tally(source: int, dest: int) -> str:
+        return (f"rank {source} traced {plural(sent[(source, dest)], 'qsend')} to "
+                f"rank {dest}, and rank {dest} traced "
+                f"{plural(received[(source, dest)], 'qrecv')} from rank {source}")
+
+    problems: List[str] = []
+    for tag in sorted(sends):
+        if tag in recvs:
+            continue
+        rank, op = sends[tag]
+        if op.dest_rank not in adapters:
+            problems.append(
+                f"rank {rank} sends qubit {op.qubits[0]} to rank {op.dest_rank}, "
+                f"but {outside(op.dest_rank)}")
+        else:
+            problems.append(
+                f"rank {rank} sends qubit {op.qubits[0]} to rank {op.dest_rank}, "
+                f"which never receives it: {tally(rank, op.dest_rank)}")
+    for tag in sorted(recvs):
+        if tag in sends:
+            continue
+        rank, op = recvs[tag]
+        if op.src_rank not in adapters:
+            problems.append(
+                f"rank {rank} waits on qubit {op.qubits[0]} for a transfer from "
+                f"rank {op.src_rank}, but {outside(op.src_rank)}")
+        else:
+            problems.append(
+                f"rank {rank} waits on qubit {op.qubits[0]} for a transfer from "
+                f"rank {op.src_rank}, which never sends it: "
+                f"{tally(op.src_rank, rank)}")
+
+    if problems:
+        listing = "\n  - ".join(problems)
+        raise RuntimeError(
+            "Every qsend needs a qrecv on the destination rank to pair with, "
+            "and the run would wait for the missing half forever:\n  - "
+            + listing)
+
+
+def _rank_list(ranks: List[int]) -> str:
+    """
+    Spell a list of ranks the way a sentence would.
+
+    Args:
+        ranks: Ranks to name.
+
+    Returns:
+        ``"rank 7"``, ``"ranks 7 and 9"``, ``"ranks 7, 9 and 11"``.
+    """
+    names = [str(r) for r in sorted(ranks)]
+    plural = "rank" if len(names) == 1 else "ranks"
+    if len(names) == 1:
+        listing = names[0]
+    else:
+        listing = ", ".join(names[:-1]) + " and " + names[-1]
+    return f"{plural} {listing}"
+
+
+def _describe_collective(op: CollectiveOperation) -> str:
+    """
+    Spell a collective record the way the user wrote the call.
+
+    Args:
+        op: Record of an ``expose`` or ``unexpose``.
+
+    Returns:
+        The call as it appears in the program, receivers and root.
+    """
+    name = "expose" if isinstance(op, Expose) else "unexpose"
+    return f"{name}(ranks={op.ranks[1:]}, root={op.root})"
+
+
+def _deadlock_report(blocked: Dict[int, CollectiveOperation]) -> str:
+    """
+    Explain which ranks reached a collective call and which did not.
+
+    Every rank of the group is, at this point, either sitting on a
+    collective or done with its block, so for each call still waiting it is
+    known exactly who is missing and what they are doing instead.
+
+    Args:
+        blocked: Collective each blocked rank is waiting on, keyed by rank.
+
+    Returns:
+        The message of the deadlock error.
+    """
+    # Group the waiting ranks by the call they are waiting on, so a
+    # collective half of whose participants arrived is reported once.
+    calls: Dict[Tuple[Any, ...], CollectiveOperation] = {}
+    for rank in sorted(blocked):
+        op = blocked[rank]
+        calls.setdefault((type(op).__name__, op.tag, tuple(op.ranks)), op)
+
+    lines: List[str] = []
+    never_called = False        # a participant ended its block without the call
+    called_something_else = False   # a participant is stuck on a different call
+    for op in calls.values():
+        reached = [r for r in op.ranks
+                   if r in blocked and op.matches(blocked[r])]
+        missing = [r for r in op.ranks if r not in reached]
+        lines.append(f"  {_describe_collective(op)}")
+        lines.append(
+            "      called by:  "
+            + ", ".join(f"rank {r}" for r in sorted(reached)))
+        for rank in sorted(missing):
+            if rank in blocked:
+                called_something_else = True
+                doing = f"is waiting on {_describe_collective(blocked[rank])}"
+            else:
+                never_called = True
+                doing = "finished its block without calling it"
+            lines.append(f"      missing:    rank {rank}, which {doing}")
+
+    # Point at the mistake that actually fits what the ranks are doing.
+    if never_called:
+        lines.append(
+            "  Every rank a collective names has to call it, just as every rank "
+            "of an MPI_Bcast calls it.")
+    if called_something_else:
+        lines.append(
+            "  These ranks are waiting on different calls: the participants of a "
+            "collective have to reach theirs in the same order, and open and "
+            "close nested windows in the same order too.")
+
+    return (
+        "Deadlock while translating the group: a collective call is waiting "
+        "for ranks that never reached it.\n"
+        + "\n".join(lines)
+    )
+
+
 def translate_group(adapters: Dict[int, CunqaCircuitAdapter]) -> List[CunqaCircuit]:
     """
     Translate the circuits of a whole group of ranks into CUNQA circuits.
@@ -540,6 +716,8 @@ def translate_group(adapters: Dict[int, CunqaCircuitAdapter]) -> List[CunqaCircu
             the ranks block on collectives that never match — the trace
             equivalent of a deadlock.
     """
+    check_transfers(adapters)
+
     ranks = sorted(adapters)
     streams = {r: list(adapters[r].ops.flatten()) for r in ranks}
     cursors = {r: 0 for r in ranks}
@@ -577,16 +755,16 @@ def translate_group(adapters: Dict[int, CunqaCircuitAdapter]) -> List[CunqaCircu
             if not missing:
                 ready = op
                 break
-            if any(r not in adapters for r in op.ranks):
+            outside = [r for r in op.ranks if r not in adapters]
+            if outside:
                 raise RuntimeError(
-                    f"rank {rank} issued {op!r} naming ranks outside the group "
-                    f"{ranks}.")
+                    f"rank {rank} called {_describe_collective(op)}, which names "
+                    f"{_rank_list(outside)}, but this run has {len(ranks)} ranks, "
+                    f"numbered 0 to {ranks[-1]}. A collective can only name ranks "
+                    f"taking part in the run, so nothing can ever match that call.")
 
         if ready is None:
-            stuck = {r: repr(op) for r, op in blocked.items()}
-            raise RuntimeError(
-                "Deadlock while translating the group: every rank is waiting "
-                f"for a collective none of its peers reached: {stuck}.")
+            raise RuntimeError(_deadlock_report(blocked))
 
         records = {r: blocked[r] for r in ready.ranks}
         if isinstance(ready, Expose):

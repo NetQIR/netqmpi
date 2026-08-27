@@ -2,7 +2,7 @@
 shots: 1024
 cunqa:
   qraise: true
-  backend: qft_expose.json    # vQPU definition -> the run's qubit budget
+  backend: cunqa_backend.json  # vQPU definition -> the run's qubit budget
   time: "00:10:00"
   family: netqmpi
-  simulator: Munich
+  simulator: Aer            # Aer is affordable too at this vQPU size

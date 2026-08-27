@@ -3,8 +3,9 @@
 Point-to-point transfers are paired by tag at run time, so a send with no
 matching recv is not detected while tracing.
 
-Layer: CUNQA runtime (needs vQPUs).
-Expected: today, a deadlock from the C++ executor naming no NetQMPI call.
+Layer: CUNQA adapter, joint translation.   Raised by: check_transfers
+Expected: an error naming the rank left holding the qubit, and how many
+qsend and qrecv calls each side traced.
 
     netqmpi -n 2 --cunqa dangling_qsend.py
 """

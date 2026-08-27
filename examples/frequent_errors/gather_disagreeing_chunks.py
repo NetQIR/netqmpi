@@ -4,8 +4,9 @@ The root lays out one qubit per rank, but rank 1 hands over two. Nothing
 at trace time compares the two sides, so the mismatch only shows up when
 the transfers fail to pair up.
 
-Layer: CUNQA runtime (needs vQPUs).
-Expected: today, a deadlock from the executor rather than a NetQMPI error.
+Layer: CUNQA adapter, joint translation.   Raised by: check_transfers
+Expected: the mismatch reported as the count it is -- two qsends against
+one qrecv -- rather than a deadlock once the circuits run.
 
     netqmpi -n 3 --cunqa gather_disagreeing_chunks.py
 """
