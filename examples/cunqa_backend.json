@@ -1,0 +1,5 @@
+{
+    "name": "netqmpi_examples",
+    "description": "vQPU sized for the NetQMPI examples at up to 3 ranks: 3 data qubits, which is what 4_gather.py's root holds (one per rank), and 2 communication qubits, for the two overlapping expose windows of 5_qft_expose.py. The gather root grows with the run, so -n 4 needs [4, 2]. The executor simulates every declared qubit of every vQPU of the family in a single register, so these numbers, not the circuits, are what set the cost of a run on a statevector simulator.",
+    "num_qubits": [3, 2]
+}

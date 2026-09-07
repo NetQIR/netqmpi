@@ -137,7 +137,7 @@ netqmpi -n <NUM_NODES> app.py --aer   --shots 1024 # circuit simulation
 netqmpi -n <NUM_NODES> app.py --qoala --shots 100  # Qoala node exec. environment
 ```
 
-The example below (`examples/netqmpi/send_recv.py`) prepares a qubit in
+The example below (`examples/1_send_recv.py`) prepares a qubit in
 superposition on one node and teleports it to a neighbour with `qsend`/`qrecv`.
 It uses **only** SDK abstractions, so the very same file runs on every backend:
 
@@ -170,13 +170,84 @@ def main(env: Environment = None):
 ```
 
 ```bash
-netqmpi -n 2 examples/netqmpi/send_recv.py --netqasm
-netqmpi -n 2 examples/netqmpi/send_recv.py --qoala --shots 100
+netqmpi -n 2 examples/1_send_recv.py --netqasm
+netqmpi -n 2 examples/1_send_recv.py --qoala --shots 100
 ```
 
 The programmer only invokes `comm.qsend()` / `comm.qrecv()`; entanglement
 generation, teleportation and classical corrections are handled by the selected
 backend adapter.
+
+### Moving qubits collectively: `qscatter` / `qgather`
+
+`qscatter` and `qgather` are `MPI_Scatter` and `MPI_Gather` with qubits instead
+of bytes. Both are **collective** — every rank of the communicator must call
+them — and **rooted**: the root passes the whole buffer and every other rank
+passes its own chunk. The call returns the local qubits holding this rank's
+share.
+
+Since a quantum state cannot be copied, the chunks are *moved*: each one is
+teleported with the same `qsend`/`qrecv` machinery as above, so the sending side
+does **not** keep the data. That is also where `qscatter` parts company with
+`MPI_Scatter`: the root's buffer is split into one chunk per rank **other than
+the root**, which keeps nothing back — scatter two qubits over two other ranks
+and the root ends up empty-handed, its slots back in `|0>`. A `qgather` is the
+other way round: the root's buffer has one slot per rank, its own contribution
+already in place, and the contributors are left with `|0>` once their qubits
+have moved. The qubits a chunk lands on must be in `|0>` when the call is
+reached, exactly as for a plain `qrecv`.
+
+```python
+with comm:
+    if rank == ROOT:
+        # One qubit for each of the other ranks; the root gives them all away.
+        circuit = env.create_circuit(num_qubits=size - 1, num_clbits=size - 1)
+        for q in range(size - 1):
+            circuit.x(q)
+        comm.qscatter(circuit, list(range(size - 1)), root=ROOT)
+        circuit.measure_all()                          # reads 0 everywhere
+    else:
+        circuit = env.create_circuit(num_qubits=1, num_clbits=1)
+        mine = comm.qscatter(circuit, [0], root=ROOT)  # lands on qubit 0
+        circuit.measure(mine[0], 0)
+```
+
+Each transfer borrows one communication qubit and two protocol classical bits and
+gives them straight back, so a whole scatter costs the same resources as a single
+`qsend`. `examples/3_scatter.py` and `examples/4_gather.py` run the
+two collectives end to end.
+
+### Sharing a control qubit: `expose` / `unexpose`
+
+Moving a qubit is not always what a distributed algorithm needs. When several
+ranks only want to apply gates *controlled* by a remote qubit — the crossing
+rotations of a QFT, for instance — the qubit can stay where it is and be lent to
+them instead, through a shared GHZ state (*telegate*).
+
+`expose` and `unexpose` are **collective**, like an `MPI_Bcast`: every rank of
+the window must call them, and `root` names the rank lending the qubit. The call
+returns the index each rank must use as control — its own data qubit on the root,
+a freshly reserved communication qubit on every receiver — so the gate itself is
+written exactly like a local one:
+
+```python
+with comm:
+    circuit = env.create_circuit(num_qubits=1, num_clbits=1)
+
+    # Rank 1 lends its qubit 0 to rank 0, which drives a CS with it.
+    control = comm.expose(circuit, 0, [0], root=1)
+
+    if rank == 0:
+        circuit.h(0)
+        circuit.cs(control, 0)
+
+    comm.unexpose(circuit, [0], root=1)   # the control goes back untouched
+```
+
+Communication qubits and the classical bits carrying the protocol corrections are
+reserved when a window opens and released when it closes, so windows that do not
+overlap reuse the same resources and user classical bits are never clobbered.
+`examples/5_qft_expose.py` builds a full 3-rank QFT this way.
 
 ## Backend hardware configuration (`--config`)
 
@@ -203,6 +274,73 @@ qoala:
 netqmpi -n 2 app.py --qoala --config config.yaml
 ```
 
+### CUNQA: which vQPUs the run uses
+
+A run needs one vQPU per rank, and by default it expects them to be **already
+raised**, so one allocation can serve many runs:
+
+```bash
+qraise -n 3 -t 00:10:00 --quantum_comm --co-located    # once
+netqmpi -n 3 examples/3_scatter.py --cunqa       # as often as you like
+```
+
+The family may hold **more** vQPUs than the run needs — three raised, `-n 2`
+run — and the extra ones cost the program nothing. CUNQA runs a single executor
+per family and it starts a round only once *every* vQPU of that family has
+submitted something, so a vQPU left out would not sit idle, it would hang the
+run; NetQMPI hands each spare one a trivial circuit instead and discards its
+counts.
+
+What a run cannot do is spread across families, since each family is executed
+on its own. If vQPUs of several families are up, name the one to use with
+`family:` in the `cunqa` block.
+
+If there are no vQPUs up at all, the run stops before building anything and
+says what to raise.
+
+To have NetQMPI raise them for the run and drop them again afterwards, ask for
+it in the `cunqa` block. `backend` is the vQPU definition file the vQPUs are
+raised with, which is what fixes the qubit budget of the run:
+
+```yaml
+# cunqa.yaml
+shots: 1024
+cunqa:
+  qraise: true                                # raise for this run, drop after it
+  backend: examples/qft_expose.json   # vQPU definition (qubit budget)
+  time: "00:10:00"                            # SLURM reservation
+  simulator: Munich
+```
+
+```bash
+netqmpi -n 3 examples/3_scatter.py --cunqa --config cunqa.yaml
+```
+
+Size that definition to what the program needs. The executor simulates the
+whole family in **one register**, spanning every qubit each vQPU declares
+whether the circuits use it or not, so the cost of a run is set by
+`num_qubits` × the number of ranks — not by the circuits. With a statevector
+simulator that register is 2^N amplitudes:
+
+| vQPU definition | `-n 2` | `-n 3` | `-n 4` | `-n 5` |
+|---|---|---|---|---|
+| `[4, 4]` — 8 qubits each | 1 MiB | 256 MiB | 64 GiB | 16 TiB |
+| `[3, 2]` — 5 qubits each | 16 KiB | 512 KiB | 16 MiB | 512 MiB |
+
+That is why `simulator` matters. NetQMPI defaults to `Munich`, whose decision
+diagrams keep a mostly-idle register small, so oversized vQPUs go unnoticed.
+CUNQA's own default, `Aer`, allocates the dense statevector and reinitialises
+it once per shot, so the same program on generous vQPUs turns into a run that
+never seems to finish — it is waiting on the simulator, not deadlocked.
+`examples/cunqa_backend.json` is sized for the examples and runs on either.
+It fits them all up to three ranks; `4_gather.py`'s root holds one qubit per
+rank, so a four-rank run of it wants `[4, 2]`.
+
+`family` picks which raised vQPUs to attach to, or names the family to raise,
+and `co_located` has to match how they were raised. `backend`, `time` and
+`simulator` only mean anything when `qraise: true`, so setting them while
+attaching to running vQPUs is reported rather than silently ignored.
+
 ## Writing a new backend
 
 Adding a backend **never requires touching the SDK**. Following the architecture
@@ -216,7 +354,11 @@ above, you provide three Runtime components under
 2. **`CircuitAdapter`** (subclass of `netqmpi.sdk.circuit.Circuit`) — implements
    the `_translate_*` hooks that map the abstract operations recorded in the
    `OperationContainer` (local gates, `measure`, `qsend`/`qrecv`, …) to the
-   backend's native instructions.
+   backend's native instructions. Operations deriving from `CollectiveOperation`
+   (`expose`/`unexpose`) are the exception: if the backend expands them into all
+   the participating circuits at once, as CUNQA's cat-entangler does, the adapter
+   translates the ranks jointly, stopping each of them at the matching collective
+   (see `translate_group` in the CUNQA adapter).
 3. **`QMPICommunicator`** (subclass of the abstract communicator) — maps rank /
    size and the communication primitives onto the backend's real resources, and
    triggers execution on context exit.
@@ -228,9 +370,13 @@ these three components differs.
 
 ## Examples
 
-Ready-to-run scripts live in [`examples/netqmpi/`](examples/netqmpi):
-`send_recv.py` (distributed superposition / teleportation), `scatter.py`,
-`gather.py`, `roundrobin.py`, `qft_expose.py`.
+Ready-to-run scripts live in [`examples/`](examples):
+`1_send_recv.py` (distributed superposition / teleportation),
+`2_round_robin.py`, `3_scatter.py`, `4_gather.py`, `5_qft_expose.py`.
+
+[`examples/frequent_errors/`](examples/frequent_errors) collects programs that are
+*meant* to fail, one failure mode each, with a `run_all.py` that reports what
+NetQMPI says about every one of them without needing any vQPU.
 
 Validation experiments for the Qoala backend (hardware-parameter propagation, EPR
 fidelity sweep, and scheduling/multitasking) are documented in

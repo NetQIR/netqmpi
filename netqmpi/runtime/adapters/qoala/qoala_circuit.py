@@ -151,7 +151,7 @@ class QoalaCircuitAdapter(Circuit):
     # ------------------------------------------------------------------
 
     def _translate_operation_container(self, op: OperationContainer):
-        for child in op.flatten():
+        for child in op.children:
             self.translate(child)
 
     def _translate_gate(self, op: Gate):

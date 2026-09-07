@@ -178,7 +178,7 @@ class AerCircuitAdapter(Circuit):
         Args:
             op: Operation container to translate.
         """
-        for child in op.flatten():
+        for child in op.children:
             self.translate(child)
 
     def _translate_qsend(self, op: QSend) -> None:

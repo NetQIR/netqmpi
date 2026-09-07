@@ -144,7 +144,6 @@ class NetQASMCommunicator(QMPICommunicator):
                         self.results[str_result] = self.results.get(str_result, 0) + 1
                 self._connection.__exit__(exc_type, exc_val, exc_tb)
 
-            print(f"rank_{self.rank}")
             NetQASMCommunicator.netqasm_circuits.append(
                 Program(party=f"rank_{self.rank}", entry=entry, args=[], results=[])
             )

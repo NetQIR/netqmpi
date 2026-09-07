@@ -60,6 +60,6 @@ conda run -n qoala pip install -e /path/to/NetQMPI
 The same `app.py` runs unchanged on every backend:
 
 ```sh
-conda run -n qoala   netqmpi -n 2 examples/netqmpi/send_recv.py --qoala --shots 20
-conda run -n squidasm netqmpi -n 2 examples/netqmpi/send_recv.py --netqasm
+conda run -n qoala   netqmpi -n 2 examples/1_send_recv.py --qoala --shots 20
+conda run -n squidasm netqmpi -n 2 examples/1_send_recv.py --netqasm
 ```

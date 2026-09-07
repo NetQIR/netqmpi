@@ -9,7 +9,7 @@ final H, and measures. With a perfect qdevice the teleported |+> is mapped to
 which makes this a valid fidelity probe (unlike measuring |+> directly in Z,
 which is 50/50 regardless of noise).
 
-Backend-agnostic: identical to ``examples/netqmpi/send_recv.py`` except for the
+Backend-agnostic: identical to ``examples/1_send_recv.py`` except for the
 extra H before the measurement. Runs unchanged on any NetQMPI backend.
 """
 from netqmpi.sdk.environment import Environment

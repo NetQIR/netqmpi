@@ -46,7 +46,7 @@ Teleportación de superposición distribuida con **lectura en base X**
 Sin ruido, `|+⟩` teleportado → `H` → `|0⟩` → resultado **0 determinista**. La
 fidelidad se estima como `F = P(outcome = 0)`.
 
-> **Por qué base X y no el `send_recv` original.** Medir `|+⟩` directamente en Z
+> **Por qué base X y no el `1_send_recv` original.** Medir `|+⟩` directamente en Z
 > da 50/50 *incluso sin ruido*, y la despolarización y el dephasing (T2) dejan
 > esa proporción intacta → curvas planas, inútiles como fidelidad. Midiendo en la
 > base propia del estado (X), la fidelidad va de 1.0 (sin ruido) a 0.5

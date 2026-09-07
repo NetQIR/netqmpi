@@ -10,11 +10,14 @@ from netqmpi.sdk.operations.gate import Gate, ControlledGate, ClassicalControlle
 from netqmpi.sdk.operations.non_unitary import Measure, Reset, Barrier
 from netqmpi.sdk.operations.container import OperationContainer
 from netqmpi.sdk.operations.qmpi import (
+    CollectiveOperation, RootedTransfer,
     QSend, QRecv, QScatter, QGather, Expose, Unexpose,
 )
 
 __all__ = [
     "Operation",
+    "CollectiveOperation",
+    "RootedTransfer",
     "Gate",
     "ControlledGate",
     "ClassicalControlledGate",
