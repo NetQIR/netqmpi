@@ -311,9 +311,9 @@ class QoalaCircuitAdapter(Circuit):
         control = op.controls[0]
         target_gate = op.targets[0]
         target = target_gate.qubits[0]
-        if target_gate.name == "X":
+        if target_gate.name == "RX":
             return [f"cnot Q{control} Q{target}"]
-        if target_gate.name == "Z":
+        if target_gate.name == "RZ":
             return [f"cphase Q{control} Q{target}"]
         raise NotImplementedError(
             f"Controlled-{target_gate.name} is not implemented for the Qoala backend yet."
