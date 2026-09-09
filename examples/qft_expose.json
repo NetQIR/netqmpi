@@ -1,0 +1,5 @@
+{
+    "name": "qft_expose",
+    "description": "Example of a CUNQA backend with 2 data qubits and 2 communication qubits.",
+    "num_qubits": [4, 4]
+}

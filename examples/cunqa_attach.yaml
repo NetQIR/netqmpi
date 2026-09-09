@@ -1,0 +1,5 @@
+# cunqa.yaml
+shots: 1024
+cunqa:
+  qraise: false
+  family: netqmpi
