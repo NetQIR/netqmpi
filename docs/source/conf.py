@@ -156,7 +156,10 @@ nitpicky = False
 html_theme = "furo"
 html_static_path = ["_static"]
 html_title = f"NetQMPI {release}"
-html_favicon = None
+# The network-node mark on a dark rounded tile, so it stays legible on both
+# the light and the dark tab background browsers use by default -- a flat
+# black or white glyph on transparent disappears on one of the two.
+html_favicon = "_static/favicon.png"
 html_copy_source = False
 html_show_sourcelink = False
 
