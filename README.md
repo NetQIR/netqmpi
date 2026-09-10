@@ -18,6 +18,10 @@ Crucially, NetQMPI is now **backend-agnostic**: the same, unmodified application
 runs on several execution engines (a quantum-network simulator, an HPC emulator,
 a circuit simulator, …) simply by selecting a backend on the command line.
 
+📖 **[Full documentation](https://netqir.github.io/net-qmpi/)** — installation,
+programming model, communication primitives, per-backend guides and the complete
+API reference.
+
 ## Table of Contents
 
 - [Architecture: a decoupled design](#architecture-a-decoupled-design)
@@ -59,7 +63,7 @@ on any backend by switching a flag** — no changes to application logic.
 | Backend | CLI flag | What it targets | Key dependencies |
 |---|---|---|---|
 | **NetQASM / SquidASM** | `--netqasm` | Low-level quantum-network simulation (EPR sockets, NetQASM routines) | [`squidasm`](https://github.com/QuTech-Delft/squidasm), [`netsquid`](https://netsquid.org), `netqasm` **1.x** |
-| **CUNQA** | `--cunqa` | HPC emulation of DQC through virtual QPUs (vQPUs) | [`cunqa`](https://arxiv.org/abs/2511.05209) (HPC / Slurm environment) |
+| **CUNQA** | `--cunqa` | HPC emulation of DQC through virtual QPUs (vQPUs) | [`cunqa`](https://github.com/CESGA-Quantum-Spain/cunqa) (HPC / Slurm environment) |
 | **Qiskit Aer** | `--aer` | Shot-based circuit simulation (swap- or teleportation-based transfer) | `qiskit`, `qiskit-aer` |
 | **Qoala** | `--qoala` | Quantum-internet **node execution environment** with task scheduling & multitasking — **simulation only** | [`qoala`](https://github.com/QuTech-Delft/qoala-sim), [`netsquid`](https://netsquid.org), `netqasm` **2.x**, Python 3.10–3.12 |
 
@@ -112,7 +116,7 @@ pip install netqmpi
 <details>
 <summary><b>CUNQA backend (HPC)</b></summary>
 
-Install and configure [CUNQA](https://arxiv.org/abs/2511.05209) on your HPC
+Install and configure [CUNQA](https://github.com/CESGA-Quantum-Spain/cunqa) on your HPC
 cluster (it provisions vQPUs via the job scheduler), then install `netqmpi` in
 the same environment.
 </details>
@@ -386,10 +390,10 @@ fidelity sweep, and scheduling/multitasking) are documented in
 
 If you use **NetQMPI** in your research, please cite the following works:
 
-> ### NetQMPI: a practical MPI-inspired library for distributed quantum computing over NetQASM SDK
-> **F. Javier Cardama**, **Tomás F. Pena**
-> *Proceedings of the IEEE International Conference on Cluster Computing (IEEE Cluster 2025)*
-> DOI: [10.1109/CLUSTERWorkshops65972.2025.11164201](https://doi.org/10.1109/CLUSTERWorkshops65972.2025.11164201)
+> ### NetQMPI: An MPI-Inspired Library for Programming Distributed Quantum Applications Over Quantum Networks Using NetQASM SDK
+> **F. Javier Cardama**, **Jorge Vázquez-Pérez**, **Tomás F. Pena**, **Andrés Gómez**
+> *IEEE Access*, Vol. 14, 2026, pp. 125459-125475
+> DOI: [10.1109/ACCESS.2026.3723566](https://doi.org/10.1109/ACCESS.2026.3723566)
 
 ---
 

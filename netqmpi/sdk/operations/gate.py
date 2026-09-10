@@ -81,7 +81,7 @@ class ControlledGate(Operation):
 
     Attributes:
         controls (List[int]):  Control qubit indices.
-        targets  (List[Gate]): Gates applied when all controls are |1⟩.
+        targets  (List[Gate]): Gates applied when all controls are ``|1⟩``.
     """
 
     def __init__(self, controls: List[int], targets: List[Gate]) -> None:

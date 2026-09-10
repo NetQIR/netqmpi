@@ -1,0 +1,17 @@
+# Documentation build dependencies.
+#
+#   pip install -r docs/requirements.txt
+#   sphinx-build -b html docs/source docs/build/html
+#
+# The backends themselves are NOT listed: they cannot be installed in a public
+# CI runner (NetSquid needs a credentialed private index, CUNQA needs SLURM), so
+# autodoc mocks them. See autodoc_mock_imports in docs/source/conf.py.
+sphinx>=7.2,<10
+furo>=2024.1.29
+myst-parser>=2.0
+sphinx-copybutton>=0.5.2
+sphinx-design>=0.5.0
+sphinxcontrib-mermaid>=0.9.2
+
+# Runtime dependency of the package itself, needed for autodoc to import it.
+pyyaml>=5.1

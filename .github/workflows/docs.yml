@@ -1,0 +1,77 @@
+# Build the Sphinx documentation and publish it to GitHub Pages.
+#
+# Pull requests build the docs as a check but do not deploy; only pushes to
+# main publish. The build treats warnings as errors (-W), so a broken
+# cross-reference or a malformed docstring fails the check instead of silently
+# degrading the site.
+#
+# The backends are deliberately NOT installed: NetSquid needs a credentialed
+# private index and CUNQA needs SLURM, neither of which exists on a public
+# runner. autodoc mocks them (see autodoc_mock_imports in docs/source/conf.py).
+name: Documentation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'netqmpi/**'
+      - 'setup.py'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'netqmpi/**'
+      - 'setup.py'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+# Allow the deploy job to publish to Pages via OIDC.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; do not cancel a run that is already publishing.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: docs/requirements.txt
+
+      - name: Install documentation dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r docs/requirements.txt
+
+      - name: Build HTML (warnings are errors)
+        run: sphinx-build -b html -W --keep-going docs/source docs/build/html
+
+      - name: Upload Pages artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/build/html
+
+  deploy:
+    # Only publish from main; a pull request stops after the build check above.
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

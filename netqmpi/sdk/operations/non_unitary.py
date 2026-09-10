@@ -60,7 +60,7 @@ class Measure(Operation):
 
 class Reset(Operation):
     """
-    Reset — unconditionally sets a qubit back to |0⟩.
+    Reset — unconditionally sets a qubit back to ``|0⟩``.
 
     Attributes:
         qubit (int): Qubit index to reset.

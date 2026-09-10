@@ -8,3 +8,10 @@ log/*
 .*
 qraise*
 cunqa_build
+# The '.*' rule above also hides .github, so the workflows never get committed.
+!.github/
+!.github/**
+
+# Sphinx build output
+docs/build/
+.venv-docs/
