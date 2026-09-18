@@ -22,8 +22,14 @@ a circuit simulator, …) simply by selecting a backend on the command line.
 programming model, communication primitives, per-backend guides and the complete
 API reference.
 
+## Contributors
+
+- [Francisco Javier Cardama Santiago](https://citius.gal/team/francisco-javier-cardama-santiago/)
+- [Jorge Vázquez Pérez](https://citius.gal/team/jorge-vazquez-perez/)
+
 ## Table of Contents
 
+- [Contributors](#contributors)
 - [Architecture: a decoupled design](#architecture-a-decoupled-design)
 - [Available backends](#available-backends)
 - [Installation](#installation)
