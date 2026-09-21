@@ -39,6 +39,13 @@ class NetQASMRunConfig(RunConfig):
     NetQASM-specific simulation parameters.
 
     Attributes:
+        shots: Number of times the program is simulated. Overrides the
+            generic default of 1024, which is wrong by two orders of
+            magnitude for this backend: SquidASM simulates the whole network
+            once per shot, at roughly a second each on a two-rank program,
+            so the generic default would take a quarter of an hour and look
+            like a hang. Raise it with ``--shots`` when the statistics
+            matter more than the wait.
         formalism: Quantum state formalism to use in the simulation.
         network_config: Network configuration describing the simulated
             topology. If ``None``, the default topology is used.
@@ -46,6 +53,7 @@ class NetQASMRunConfig(RunConfig):
             instruction logging.
     """
 
+    shots: int = 50
     formalism: Formalism = field(default_factory=lambda: Formalism.KET)
     enable_logging: bool = True
     hardware: str = "generic"

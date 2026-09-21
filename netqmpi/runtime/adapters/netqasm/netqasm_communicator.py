@@ -75,11 +75,6 @@ class NetQASMCommunicator(QMPICommunicator):
             self._epr_sockets[self.get_rank_name(self.rank)].values()
         )
         
-        # -- Classical sockets (created lazily) -----------------------------
-        self._sockets: Dict[str, Dict[str, Socket]] = {}
-        for i in range(self.size):
-            self._sockets[self.get_rank_name(i)] = {}
-        
         self._connection = None
         
         self._config = config
@@ -88,16 +83,6 @@ class NetQASMCommunicator(QMPICommunicator):
     # ------------------------------------------------------------------
     # Context manager
     # ------------------------------------------------------------------
-    
-    @property
-    def sockets(self) -> Dict[str, Dict[str, Socket]]:
-        """
-        Return the classical sockets indexed by rank name.
-
-        Returns:
-            A nested mapping of classical sockets.
-        """
-        return self._sockets
     
     @property
     def epr_sockets(self) -> Dict[str, Dict[str, EPRSocket]]:
@@ -154,6 +139,12 @@ class NetQASMCommunicator(QMPICommunicator):
             # program built by this loop would close over the last circuit
             # of the rank rather than its own.
             def entry(app_config=None, circuit=circuit):
+                # One call per shot. The qubits of the previous shot were
+                # consumed with it, so the slots start empty and are filled
+                # again on first use; keeping them would hand this shot
+                # qubits belonging to a connection that no longer exists.
+                circuit.reset_round()
+
                 self._connection = NetQASMConnection(
                     app_name=app_config.app_name,
                     log_config=app_config.log_config, # TODO: Change none
@@ -209,29 +200,27 @@ class NetQASMCommunicator(QMPICommunicator):
             if network_config is not None:
                 network_config = network_cfg_from_path(".", network_config)
 
-            # One simulation per shot. ``num_rounds`` looks like the natural
-            # place to ask for repeats, but the sockets are built once per
-            # network and a second round finds them closed ("Socket is not
-            # connected so cannot send"); running the whole simulation again,
-            # on a network built afresh, is what actually repeats the
-            # experiment. Before this, num_rounds was pinned at 1 and every
-            # run returned a single sample whatever --shots asked for, so a
-            # 50/50 outcome came back as a certainty. Results accumulate.
-            for _ in range(max(1, self._config.shots)):
-                for comm in NetQASMCommunicator.communicators:
-                    comm._reset_round()
+            # ``num_rounds`` is how SquidASM repeats an experiment, and it
+            # was pinned at 1: every run returned a single sample whatever
+            # --shots asked for, so a 50/50 outcome came back as a certainty.
+            # Asking for real repeats needs the sockets to stop being cached
+            # (a second round finds the cached one closed, "Socket is not
+            # connected so cannot send") and each shot to start from empty
+            # qubit slots. Results accumulate across the rounds.
+            for comm in NetQASMCommunicator.communicators:
+                comm._reset_sockets()
 
-                simulate_application(
-                    app_instance=app_instance,
-                    num_rounds=1,
-                    network_cfg=network_config,
-                    formalism=formalism,
-                    post_function=self._config.post_function,
-                    log_cfg=log_cfg,
-                    use_app_config=True,
-                    enable_logging=self._config.enable_logging,
-                    hardware=self._config.hardware,
-                )
+            simulate_application(
+                app_instance=app_instance,
+                num_rounds=max(1, self._config.shots),
+                network_cfg=network_config,
+                formalism=formalism,
+                post_function=self._config.post_function,
+                log_cfg=log_cfg,
+                use_app_config=True,
+                enable_logging=self._config.enable_logging,
+                hardware=self._config.hardware,
+            )
 
             if self._config.enable_logging and log_cfg is not None:
                 create_app_instr_logs(log_cfg.log_subroutines_dir)
@@ -252,16 +241,13 @@ class NetQASMCommunicator(QMPICommunicator):
         cls.communicators = []
 
 
-    def _reset_round(self) -> None:
+    def _reset_sockets(self) -> None:
         """
-        Drop everything a finished simulation round left behind.
+        Give this rank the EPR sockets the coming run will be connected with.
 
-        Each round runs on a freshly built network, so the classical and EPR
-        sockets of the previous one no longer refer to anything, and each
-        circuit has to emit its operations again against new qubits.
+        Called once per run, before the rounds begin; the classical sockets
+        are built on demand by :meth:`get_socket`.
         """
-        self._sockets = {self.get_rank_name(i): {} for i in range(self.size)}
-
         self._epr_sockets = {self.get_rank_name(i): {} for i in range(self.size)}
         for other in range(self.size):
             if other != self.rank:
@@ -276,24 +262,22 @@ class NetQASMCommunicator(QMPICommunicator):
 
     def get_socket(self, my_rank: int, other_rank: int) -> Socket:
         """
-        Return the classical socket between two ranks, creating it if needed.
+        Return a classical socket between two ranks.
+
+        A fresh one every time, deliberately. These used to be cached for
+        the life of the communicator, which survives the network they were
+        opened on: the second shot then reached for a socket belonging to a
+        torn-down network and failed with "Socket is not connected so cannot
+        send". A socket is cheap, and it belongs to one connection.
 
         Args:
             my_rank: Rank requesting the socket.
             other_rank: Rank at the other endpoint of the socket.
 
         Returns:
-            The classical socket connecting the two ranks.
+            A classical socket connecting the two ranks.
         """
-        my_sockets = self._sockets[self.get_rank_name(my_rank)]
-        other_name = self.get_rank_name(other_rank)
-
-        if other_name not in my_sockets:
-            my_sockets[other_name] = Socket(
-                self.get_rank_name(my_rank), other_name
-            )
-
-        return my_sockets[other_name]
+        return Socket(self.get_rank_name(my_rank), self.get_rank_name(other_rank))
 
     def get_epr_socket(self, my_rank: int, other_rank: int) -> EPRSocket:
         """
