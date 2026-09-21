@@ -18,6 +18,9 @@ from netqasm.runtime.app_config import AppConfig
 from netqasm.util.yaml import load_yaml
 from netqasm.runtime.settings import Formalism
 
+from netqmpi.runtime.adapters.netqasm.netqasm_communicator import (
+    NetQASMCommunicator,
+)
 from netqmpi.runtime.executor import Executor
 from netqmpi.runtime.run_config import RunConfig
 from netqmpi.runtime.adapters.netqasm import NetQASMCommunicator, NetQASMCircuitAdapter
@@ -176,5 +179,9 @@ class NetQASMExecutorAdapter(Executor):
             app_instance: Application instance returned by
                 :meth:`build_apps`.
         """
+        # A previous run that failed part-way leaves its programs on the
+        # class; starting from them would silently mix two runs together.
+        NetQASMCommunicator.reset_run()
+
         for app in apps:
             app()
