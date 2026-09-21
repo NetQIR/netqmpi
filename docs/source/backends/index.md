@@ -9,7 +9,8 @@ an HPC emulation, a plain circuit — and how faithfully.
 | Backend | Flag | What it targets | Key dependencies |
 |---|---|---|---|
 | **[CUNQA](cunqa.md)** {bdg-primary}`reference` | `--cunqa` | HPC emulation of DQC through virtual QPUs (vQPUs) | [`cunqa`](https://github.com/CESGA-Quantum-Spain/cunqa) (HPC / SLURM environment) |
-| **[NetQASM / SquidASM](netqasm.md)** | `--netqasm` | Low-level quantum-network simulation (EPR sockets, NetQASM routines) | [`squidasm`](https://github.com/QuTech-Delft/squidasm), [`netsquid`](https://netsquid.org), `netqasm` **1.x** |
+| **[NetQASM / SquidASM](netqasm.md)** | `--netqasm` | Low-level quantum-network simulation (EPR sockets, NetQASM routines) | [`squidasm`](https://github.com/QuTech-Delft/squidasm), [`netsquid`](https://netsquid.org), `netqasm` **2.x**, Python ≥ 3.9 |
+| **[NetQASM / SquidASM (legacy)](netqasm.md)** | `--netqasm1.0` | The same backend against the older NetQASM release | `squidasm`, `netsquid`, `netqasm` **1.x** |
 | **[Qiskit Aer](aer.md)** | `--aer` | Shot-based circuit simulation | `qiskit`, `qiskit-aer` |
 | **[Qoala](qoala.md)** | `--qoala` | Quantum-internet **node execution environment**, with task scheduling and multitasking — simulation only | [`qoala`](https://github.com/QuTech-Delft/qoala-sim), [`netsquid`](https://netsquid.org), `netqasm` **2.x**, Python 3.10–3.12 |
 
@@ -63,12 +64,19 @@ differently.
 
 ## Environment constraints
 
-:::{admonition} NetQASM 1.x and Qoala's 2.x cannot share an environment
+:::{admonition} SquidASM and Qoala cannot share an environment
 :class: warning
 
-The `--netqasm` and `--qoala` backends depend on mutually incompatible major
-versions of `netqasm`, so they must live in **separate** environments (two conda
-envs, for instance). CUNQA and Aer have no such constraint.
+The `--netqasm` and `--qoala` backends must live in **separate** environments
+(two conda envs, for instance) — but not, as long thought, because of the
+NetQASM version. Both run on NetQASM 2.x; what actually conflicts is the
+NetSquid plugin stack, since SquidASM needs `netsquid-magic` 16.x and
+qoala-sim needs 14.x. Installing one over the other leaves the displaced
+backend unable to build a link layer.
+
+A third environment holds the legacy `--netqasm1.0` path on NetQASM 1.x, which
+pins Python to 3.8 — NetQASM 2.x requires 3.9 or newer. CUNQA and Aer have no
+such constraints.
 
 This is also why the CLI imports backends lazily: only the one you select is
 ever imported.

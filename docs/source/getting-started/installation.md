@@ -48,14 +48,28 @@ size them.
 :::{tab-item} NetQASM / SquidASM
 :sync: netqasm
 
-Low-level quantum-network simulation.
+Low-level quantum-network simulation. NetSquid and SquidASM come from a
+private index that needs a free account; see the
+[NetQASM installation docs](https://netqasm.readthedocs.io/en/stable/installation.html).
 
 ```bash
-pip install squidasm --extra-index-url https://<user>:<pwd>@pypi.netsquid.org
+conda create -n netqasm2 python=3.11 pip -y
+conda activate netqasm2
+export PIP_EXTRA_INDEX_URL='https://<user>:<url-encoded-pwd>@pypi.netsquid.org'
+pip install "squidasm>=0.13" "netqasm>=2,<3"
 ```
 
-This pulls in `netsquid` and `netqasm` **1.x**. See the
-[NetQASM installation docs](https://netqasm.readthedocs.io/en/stable/installation.html).
+This pulls in `netsquid` and `netqasm` **2.x** — used by `--netqasm`. The
+verified set is pinned in `environments/netqasm2-requirements.txt`.
+
+For the legacy `--netqasm1.0` path, build a second environment on Python 3.8
+with `netqasm` **1.x** instead; 2.x requires Python 3.9 or newer.
+
+:::{tip}
+Pin `squidasm>=0.13`. PyPI carries a placeholder package of the same name at
+`0.0.1` with no dependencies, and pip installs that in preference to the real
+one unless a version floor sends it to the private index.
+:::
 :::
 
 :::{tab-item} Qiskit Aer
@@ -103,14 +117,26 @@ pip install netsquid --extra-index-url https://<user>:<pwd>@pypi.netsquid.org
 Substitute your NetSquid credentials for `<user>` and `<pwd>`.
 :::
 
-:::{admonition} NetQASM 1.x and 2.x cannot coexist
+:::{admonition} Three environments, and what actually separates them
 :class: warning
 
-The NetQASM/SquidASM backend uses `netqasm` **1.x**; Qoala uses `netqasm`
-**2.x**. The two are mutually incompatible, so the `--netqasm` and `--qoala`
-backends must live in **separate environments** (two conda envs, for instance).
+| Environment | Holds | Serves |
+|---|---|---|
+| `netqasm2` | SquidASM + `netqasm` 2.x + `netsquid-magic` 16.x, Python ≥ 3.9 | `--netqasm` |
+| `squidasm` | SquidASM + `netqasm` 1.x, Python 3.8 | `--netqasm1.0` |
+| `qoala` | qoala-sim + `netqasm` 2.3 + `netsquid-magic` 14.x | `--qoala` |
 
-CUNQA and Aer have no such constraint and can share an environment with either.
+SquidASM and Qoala cannot share an environment, but **not** because of the
+NetQASM version — both run on 2.x. They need incompatible majors of
+`netsquid-magic` (16.x against 14.x), and installing one over the other leaves
+the displaced backend unable to build a link layer.
+
+SquidASM also caps at NetQASM **2.0.0** (`squidasm` 0.13.6 declares
+`netqasm<=2.0.0`), while qoala-sim builds on 2.3. And NetQASM 2.x needs Python
+3.9 or newer, which is what keeps the legacy 1.x environment on 3.8.
+
+CUNQA and Aer have no such constraints and can share an environment with any of
+them.
 :::
 
 ## Verifying the installation

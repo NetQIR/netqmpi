@@ -899,10 +899,6 @@ CONTROLLED_PHASE = """
 """
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "the Aer adapter's controlled-gate table handles only X, Z and RZ: cs, "
-    "ct and cp record a controlled S/T/P and are dropped without a word. "
-    "5_qft_expose is written on cp, so on Aer its rotations do nothing."))
 @pytest.mark.parametrize("call", [
     "cs(0, 1)",
     "cp(0, 1, np.pi / 2)",

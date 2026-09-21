@@ -37,9 +37,13 @@ netqmpi -n 2 app.py --aer        # circuit simulation
 netqmpi -n 2 app.py --qoala      # node execution environment
 ```
 
-[CUNQA](https://github.com/CESGA-Quantum-Spain/cunqa) is the **reference backend**: it is the only one that implements the whole
-primitive set — point-to-point transfers, the rooted collectives and the telegate
-window — and it is what the shipped examples are written against.
+[CUNQA](https://github.com/CESGA-Quantum-Spain/cunqa) is the **reference
+backend**, and what the shipped examples are written against. Aer now
+implements the whole primitive set as well — point-to-point transfers, the
+rooted collectives and the telegate window — which makes it the fast way to
+check a program's logic before committing it to a network simulation. NetQASM
+covers everything but the telegate window; Qoala covers point-to-point
+transfers. See the [backend guide](backends/index.md) for the full matrix.
 
 ---
 
@@ -90,6 +94,13 @@ What each backend targets, what it supports, and how to configure it.
 Every public class, method and configuration field.
 :::
 
+:::{grid-item-card} {octicon}`beaker` Test suite
+:link: development/testing
+:link-type: doc
+
+What is tested, how to run it, and how to add a test of your own.
+:::
+
 ::::
 
 ---
@@ -134,6 +145,7 @@ backends/qoala
 
 development/architecture
 development/writing-a-backend
+development/testing
 ```
 
 ```{toctree}

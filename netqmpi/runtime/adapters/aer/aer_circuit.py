@@ -8,6 +8,7 @@ register.
 """
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -178,8 +179,12 @@ class AerCircuitAdapter(Circuit):
                 self._global(op.qubits[1]),
             ),
         }
-        if op.name in gate_map:
-            gate_map[op.name]()
+        if op.name not in gate_map:
+            # Skipping quietly emitted a circuit without the gate and a
+            # perfectly plausible histogram for a program that never ran.
+            raise NotImplementedError(
+                f"Gate '{op.name}' is not implemented for the Aer backend.")
+        gate_map[op.name]()
 
     def _translate_controlled_gate(self, op: ControlledGate) -> None:
         """
@@ -188,19 +193,34 @@ class AerCircuitAdapter(Circuit):
         Args:
             op: Controlled gate operation to translate.
         """
-        target_name = op.targets[0].name
+        target_gate = op.targets[0]
+        target_name = target_gate.name
         ctrl = [self._global(c) for c in op.controls]
-        tgt = [self._global(q) for q in op.targets[0].qubits]
+        tgt = [self._global(q) for q in target_gate.qubits]
 
-        if target_name == "X":
-            if len(ctrl) == 1:
-                self._global_circuit.cx(ctrl[0], tgt[0])
-            elif len(ctrl) == 2:
-                self._global_circuit.ccx(ctrl[0], ctrl[1], tgt[0])
+        if target_name == "X" and len(ctrl) == 1:
+            self._global_circuit.cx(ctrl[0], tgt[0])
+        elif target_name == "X" and len(ctrl) == 2:
+            self._global_circuit.ccx(ctrl[0], ctrl[1], tgt[0])
         elif target_name == "Z" and len(ctrl) == 1:
             self._global_circuit.cz(ctrl[0], tgt[0])
         elif target_name == "RZ" and len(ctrl) == 1:
-            self._global_circuit.crz(op.targets[0].params[0], ctrl[0], tgt[0])
+            self._global_circuit.crz(target_gate.params[0], ctrl[0], tgt[0])
+        # The phase family. These were missing, and because they were
+        # missing they were dropped in silence: a QFT written with cp came
+        # out of this adapter with every one of its rotations gone, and an
+        # echo probe still read all-zeros because dropping all of them is
+        # also the identity.
+        elif target_name == "P" and len(ctrl) == 1:
+            self._global_circuit.cp(target_gate.params[0], ctrl[0], tgt[0])
+        elif target_name == "S" and len(ctrl) == 1:
+            self._global_circuit.cp(math.pi / 2, ctrl[0], tgt[0])
+        elif target_name == "T" and len(ctrl) == 1:
+            self._global_circuit.cp(math.pi / 4, ctrl[0], tgt[0])
+        else:
+            raise NotImplementedError(
+                f"Controlled-{target_name} with {len(ctrl)} control(s) is not "
+                f"implemented for the Aer backend.")
 
     def _translate_classical_controlled_gate(self, op: ClassicalControlledGate) -> None:
         """

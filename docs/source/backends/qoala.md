@@ -46,13 +46,35 @@ pip install netqmpi
 | Several circuits per rank | ❌ exactly one circuit per rank |
 
 Gates: `H` `X` `Y` `Z` directly; `S` `SDG` `T` `TDG` as fixed `rot_z` rotations;
-`RX` `RY` `RZ` **discretised to multiples of π/16**.
+`RX` `RY` `RZ` **discretised to multiples of π/16**; `SWAP` as three CNOTs; and
+controlled `X` (`cnot`) and `Z` (`cphase`).
+
+:::{admonition} What was fixed
+:class: note
+
+The controlled-gate table was written against names the SDK never emits, and
+three things followed from that:
+
+- **`cx` and `cz` were unreachable.** The table compared the *target* gate's
+  name against `"RX"` and `"RZ"`, but the SDK records a CNOT as a controlled
+  `Gate('X')` and a CZ as a controlled `Gate('Z')`. Both of the gates the table
+  meant to support raised `NotImplementedError`.
+- **`crz(theta)` came out as a plain CZ.** A `crz` *does* record a controlled
+  `Gate('RZ')`, so it fell into the `"RZ"` branch and was emitted as `cphase`
+  — a controlled-Z — **with the angle silently discarded**. It is now refused
+  explaining why: NetQASM has no controlled-rotation instruction.
+- **`SWAP` reached no table at all.** The SDK records it as a two-qubit `Gate`,
+  so it was dispatched down the single-qubit path and died as an unknown name.
+:::
 
 :::{caution}
-Controlled gates are effectively unavailable. The adapter maps controlled-`RX`
-to `cnot` and controlled-`RZ` to `cphase`, but `cx()` records a controlled-`X`
-and `cz()` a controlled-`Z`, so neither matches and both raise. `crz()` does map
-to `cphase`, but discards its angle.
+A local gate placed on **both sides of a round trip** — swap a qubit into a
+scratch slot, send it away, receive it back, swap it out again — makes the
+generated `.iqoala` program stop before returning its measurement, and
+`_build_counts` then raises `KeyError` looking for a host variable that never
+came back. The round trip alone is fine, and so are the swaps alone. This is
+what stops `apps/ghz.py` running on Qoala; it is pinned as a strict `xfail` in
+`test/test_qoala_backend.py` so that it reports the day it is fixed.
 :::
 
 More than one circuit per rank is rejected explicitly:
