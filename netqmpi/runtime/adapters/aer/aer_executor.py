@@ -10,6 +10,16 @@ from __future__ import annotations
 import threading
 from typing import Any, List, Tuple
 
+# Imported at module scope, not lazily inside the methods that use them.
+# This package is only ever imported once a run has chosen the Aer backend
+# (the CLI defers it to its ``--aer`` branch), so there is nothing to gain
+# by deferring further — and deferring actively misleads: importing Qiskit
+# takes the best part of a second, and paying for it inside
+# ``create_circuit`` charged it to the user's trace, where a profiler reads
+# it as the cost of building the circuit rather than of loading a library.
+from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister  # type: ignore[import-not-found]
+from qiskit_aer import AerSimulator  # type: ignore[import-not-found]
+
 from netqmpi.runtime.executor import Executor
 from netqmpi.sdk.environment import Environment
 from netqmpi.runtime.adapters.aer.aer_circuit import AerCircuitAdapter
@@ -80,7 +90,6 @@ class AerExecutorAdapter(Executor):
         """
         with self._lock:
             if self._global_circuit is None:
-                from qiskit import QuantumCircuit  # type: ignore[import-not-found]
                 self._global_circuit = QuantumCircuit(0, 0)
 
             # len(comm.circuits) is the index of the circuit being created:
@@ -89,7 +98,6 @@ class AerExecutorAdapter(Executor):
 
             if circuit_index >= len(self._circuit_groups):
                 # First rank for this group: allocate slots for all ranks.
-                from qiskit import QuantumRegister, ClassicalRegister  # type: ignore[import-not-found]
                 qr = QuantumRegister(self._size * num_qubits, f'qr{circuit_index}')
                 cr = ClassicalRegister(self._size * num_clbits, f'cr{circuit_index}')
                 self._global_circuit.add_register(qr)
@@ -146,12 +154,26 @@ class AerExecutorAdapter(Executor):
 
         Args:
             apps: List of callables returned by :meth:`build_apps`.
+
+        Raises:
+            Exception: Whatever the designated thread raised while
+                translating or simulating, re-raised here once every rank
+                has been released.
         """
+        AerCommunicator._error = None
+
         threads = [threading.Thread(target=app) for app in apps]
         for t in threads:
             t.start()
         for t in threads:
             t.join()
+
+        # A failure inside the designated thread is captured there rather
+        # than raised, so that every rank still clears the barrier; this is
+        # where it becomes the caller's problem.
+        error, AerCommunicator._error = AerCommunicator._error, None
+        if error is not None:
+            raise error
 
     # ------------------------------------------------------------------
     # Internal helpers called by AerCommunicator.__exit__
@@ -164,8 +186,6 @@ class AerExecutorAdapter(Executor):
         Called by the designated thread inside ``AerCommunicator.__exit__``
         after all ranks have finished building their circuits.
         """
-        from qiskit_aer import AerSimulator  # type: ignore[import-not-found]
-
         run_kwargs: dict = {"shots": self._config.shots}
         if self._config.seed_simulator is not None:
             run_kwargs["seed_simulator"] = self._config.seed_simulator

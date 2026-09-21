@@ -571,25 +571,28 @@ def plot_overhead_model(records: Sequence[Dict[str, Any]],
         model: Output of :func:`build_model`.
         path: Destination PNG.
     """
-    figure, axes = plt.subplots(figsize=(7, 5))
+    figure, axes = plt.subplots(figsize=(7.5, 5))
 
     for backend in BACKENDS:
-        group = warm([r for r in records if r["backend"] == backend])
+        group = by_config(warm([r for r in records if r["backend"] == backend]))
         if not group:
             continue
-        axes.scatter([r["ops_total"] for r in group],
-                     [r["t_netqmpi"] * 1e3 for r in group],
-                     s=22, alpha=0.7, label=backend, color=COLOURS[backend])
+        ops = np.array([r["ops_total"] for r in group], float)
+        axes.scatter(ops, [r["t_netqmpi"] * 1e3 for r in group],
+                     s=26, alpha=0.75, label=backend, color=COLOURS[backend])
 
-    fit = (model.get("pooled") or {}).get("t_netqmpi_vs_ops")
-    if fit:
-        ops = np.array([r["ops_total"] for r in records], float)
-        grid = np.linspace(0, ops.max() * 1.05, 100)
-        axes.plot(grid, (fit["alpha"] + fit["beta"] * grid) * 1e3, "k--",
-                  linewidth=1.5,
-                  label=(r"$t = {:.2f}\,\mathrm{{ms}} + {:.2f}\,\mu s \times G$"
-                         "\n" r"($R^2={:.3f}$)").format(
-                             fit["alpha"] * 1e3, fit["beta"] * 1e6, fit["r2"]))
+        # One line per backend rather than a single pooled one: the slopes
+        # differ by an order of magnitude between them, so a fit through all
+        # of them at once describes none of them.
+        fit = (model.get(backend) or {}).get("t_netqmpi_vs_ops")
+        if fit and fit["n"] >= 5:
+            grid = np.linspace(0, ops.max() * 1.05, 100)
+            axes.plot(grid, (fit["alpha"] + fit["beta"] * grid) * 1e3,
+                      "--", linewidth=1.4, color=COLOURS[backend],
+                      label=(r"  {:.2f} ms + {:.1f} $\mu$s$\times G$  "
+                             r"($R^2$={:.3f})").format(
+                                 fit["alpha"] * 1e3, fit["beta"] * 1e6,
+                                 fit["r2"]))
 
     axes.set_xlabel("operations recorded by the trace, $G$")
     axes.set_ylabel("NetQMPI time (trace + translate), ms")

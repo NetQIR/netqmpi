@@ -93,6 +93,18 @@ BACKEND_PROBES: Dict[str, List[Tuple[str, Optional[str], str]]] = {
     ],
 }
 
+#: Joint-translation entry points, per backend. A backend whose adapter
+#: expands a collective or pairs a transfer does that work *outside*
+#: ``Circuit.translate`` — it needs every rank's stream at once — so timing
+#: only the per-operation dispatch would quietly drop that cost into the
+#: synchronisation bucket. These are wrapped as an outer translate scope,
+#: with the same re-entrancy guard, so the per-operation calls they make
+#: nest inside instead of being counted twice.
+GROUP_TRANSLATE_PROBES: Dict[str, List[Tuple[str, str]]] = {
+    "aer": [("netqmpi.runtime.adapters.aer.aer_circuit", "translate_group")],
+    "cunqa": [("netqmpi.runtime.adapters.cunqa.cunqa_circuit", "translate_group")],
+}
+
 #: Backends whose translation is interleaved with execution rather than
 #: happening in a separate pass, so ``translate`` cannot be isolated from
 #: ``backend``. The NetQASM adapter returns callables from ``translate``
@@ -161,6 +173,15 @@ class Profiler:
 
         self._patch(Circuit, "translate", timed_translate)
 
+        for module_name, attr in GROUP_TRANSLATE_PROBES.get(self.backend, []):
+            try:
+                module = importlib.import_module(module_name)
+            except ImportError:
+                continue
+            if hasattr(module, attr):
+                self._patch(module, attr,
+                            self._translate_scope(getattr(module, attr)))
+
         for module_name, class_name, attr in BACKEND_PROBES.get(self.backend, []):
             try:
                 module = importlib.import_module(module_name)
@@ -207,6 +228,32 @@ class Profiler:
                 return app(*args, **kwargs)
             finally:
                 self._app_seconds += time.perf_counter() - start
+        return wrapper
+
+    def _translate_scope(self, func: Callable) -> Callable:
+        """
+        Wrap a joint-translation pass as the outermost translation scope.
+
+        Shares :attr:`_depth` with the per-operation hook, so the
+        ``Circuit.translate`` calls made from inside are charged once, here,
+        rather than twice.
+
+        Args:
+            func: The group-translation callable.
+
+        Returns:
+            The wrapped callable.
+        """
+        def wrapper(*args, **kwargs):
+            if self._depth:
+                return func(*args, **kwargs)
+            self._depth = 1
+            start = time.perf_counter()
+            try:
+                return func(*args, **kwargs)
+            finally:
+                self.times["translate"] += time.perf_counter() - start
+                self._depth = 0
         return wrapper
 
     def _timed(self, func: Callable, bucket: str) -> Callable:

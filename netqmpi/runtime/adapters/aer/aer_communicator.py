@@ -28,9 +28,9 @@ class AerCommunicator(QMPICommunicator):
     a :class:`threading.Barrier` to synchronise them:
 
     1. Every rank finishes building its circuit ops and reaches the barrier.
-    2. One designated thread translates all circuits (in rank order, so
-       gate ordering in the global circuit is deterministic) and runs the
-       simulation.
+    2. One designated thread translates all the ranks' circuits jointly —
+       interleaving them so that transfers pair up and cross-rank
+       dependencies survive — and runs the simulation.
     3. All threads are released with results available and continue past
        the ``with env.comm:`` block simultaneously.
 
@@ -48,6 +48,12 @@ class AerCommunicator(QMPICommunicator):
     communicators: List["AerCommunicator"] = []
     # Set by AerExecutorAdapter.build_apps after all communicators are created.
     _barrier: Optional[threading.Barrier] = None
+    # Raised by the designated thread, re-raised by the executor once every
+    # rank has been released. Without it a failure there — an unmatched
+    # transfer, an unsupported gate — would leave the other ranks waiting on
+    # a barrier that nobody will ever reach, and the process would hang
+    # instead of reporting what went wrong.
+    _error: Optional[BaseException] = None
 
     def __init__(
         self,
@@ -87,8 +93,8 @@ class AerCommunicator(QMPICommunicator):
 
         * **Phase 1** – all ranks wait until every rank has finished
           appending operations to its circuit.
-        * **Phase 2** – one designated thread (party 0) translates all
-          circuits into the global QuantumCircuit in rank order and
+        * **Phase 2** – one designated thread (party 0) translates every
+          rank's circuits *together* into the global QuantumCircuit and
           submits the simulation.  All other threads block here.
         * **Phase 3** – all threads are released once results are
           available; the designated thread resets class-level state for
@@ -105,14 +111,15 @@ class AerCommunicator(QMPICommunicator):
         # Phase 1: wait for every rank to finish building its circuit.
         party_id = AerCommunicator._barrier.wait()
 
-        # Phase 2: one thread translates all circuits in rank order and
-        # runs the simulation.  Rank order is deterministic because
-        # build_apps creates communicators 0..size-1 in sequence.
+        # Phase 2: one thread translates every rank's circuits together and
+        # runs the simulation. Whatever happens it must reach the next
+        # barrier, or the other ranks wait for it forever.
         if party_id == 0:
-            for comm in AerCommunicator.communicators:
-                for circuit in comm.circuits:
-                    circuit.translate(circuit.ops)
-            self._executor._run_simulation()
+            try:
+                self._translate_all()
+                self._executor._run_simulation()
+            except BaseException as error:        # noqa: BLE001 - re-raised below
+                AerCommunicator._error = error
 
         # Phase 3: all threads block until the simulation is done, then
         # the designated thread resets shared state.
@@ -124,3 +131,38 @@ class AerCommunicator(QMPICommunicator):
             AerCommunicator._barrier = None
 
         return None
+
+    # ------------------------------------------------------------------
+    # Translation
+    # ------------------------------------------------------------------
+
+    def _translate_all(self) -> None:
+        """
+        Translate every rank's circuits into the global circuit, jointly.
+
+        The circuits are paired by creation order: the *i*-th circuit of
+        every rank belongs to the same distributed program, so they are
+        translated together. Translating them one rank at a time would put
+        all of rank 0's gates before any of rank 1's, which silently
+        reorders any dependency that does not happen to follow rank order.
+
+        Raises:
+            RuntimeError: If the ranks did not create the same number of
+                circuits, since their circuits could not then be paired.
+        """
+        from netqmpi.runtime.adapters.aer.aer_circuit import translate_group
+
+        communicators = {comm.rank: comm
+                         for comm in AerCommunicator.communicators}
+        ranks = sorted(communicators)
+
+        counts = {len(communicators[rank].circuits) for rank in ranks}
+        if len(counts) > 1:
+            per_rank = {rank: len(communicators[rank].circuits) for rank in ranks}
+            raise RuntimeError(
+                "Every rank must create the same number of circuits so that "
+                f"they can be paired into distributed programs, got {per_rank}.")
+
+        for index in range(counts.pop() if counts else 0):
+            translate_group({rank: communicators[rank].circuits[index]
+                             for rank in ranks})

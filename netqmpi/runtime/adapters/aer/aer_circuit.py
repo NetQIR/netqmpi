@@ -8,7 +8,7 @@ register.
 """
 from __future__ import annotations
 
-from typing import Any, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from qiskit import QuantumCircuit  # type: ignore[import-not-found]
@@ -183,38 +183,77 @@ class AerCircuitAdapter(Circuit):
 
     def _translate_qsend(self, op: QSend) -> None:
         """
-        Translate a quantum send into the global circuit.
+        Reject a transfer reached outside the joint translation pass.
 
-        In ``swap`` mode, inserts a SWAP gate between the source qubit slot
-        and the matching slot on the destination rank within the same circuit
-        group.  The destination offset is ``group_base + dest_rank * num_qubits``,
-        which remains correct across multiple circuit groups.
+        A transfer needs both of its halves to be emitted: the sender says
+        which qubit leaves, the receiver says where it lands, and the pair
+        also fixes *when* it happens relative to the other ranks' gates.
+        Translating one rank's stream on its own can supply none of that,
+        so rather than guess — which is what this adapter used to do, with
+        silently wrong results — it refuses. :func:`translate_group` is the
+        supported entry point.
 
         Args:
             op: Quantum send operation to translate.
 
         Raises:
-            NotImplementedError: When ``transfer_mode`` is ``"teleport"``.
+            RuntimeError: Always.
         """
-        if self._config.transfer_mode == "swap":
-            dest_offset = self._group_base + op.dest_rank * self._num_qubits
-            for q in op.qubits:
-                self._global_circuit.swap(q + self._offset, q + dest_offset)
-        else:
-            raise NotImplementedError(
-                "teleport mode is not yet implemented; use transfer_mode='swap'"
-            )
+        raise RuntimeError(
+            f"qsend (tag {op.tag}) cannot be translated on its own: the Aer "
+            f"adapter needs every rank's stream at once to pair a transfer "
+            f"with its qrecv and to order it against the other ranks' gates. "
+            f"Use translate_group().")
 
     def _translate_qrecv(self, op: QRecv) -> None:
         """
-        Translate a quantum receive (no-op for the monolithic circuit model).
+        Reject a transfer reached outside the joint translation pass.
 
-        After a ``qsend`` SWAP the transferred state is already in the
-        destination slot, so the receiver needs no circuit action.
+        See :meth:`_translate_qsend`.
 
         Args:
             op: Quantum receive operation to translate.
+
+        Raises:
+            RuntimeError: Always.
         """
+        raise RuntimeError(
+            f"qrecv (tag {op.tag}) cannot be translated on its own: the Aer "
+            f"adapter needs every rank's stream at once to pair a transfer "
+            f"with its qsend and to order it against the other ranks' gates. "
+            f"Use translate_group().")
+
+    # ------------------------------------------------------------------
+    # Transfers, emitted by the joint pass
+    # ------------------------------------------------------------------
+
+    @property
+    def qubit_offset(self) -> int:
+        """Global index where this rank's slice of the register starts."""
+        return self._offset
+
+    def emit_transfer(self, op: QSend, source: int, target: int) -> None:
+        """
+        Move one qubit from a sender's slot to a receiver's slot.
+
+        In ``swap`` mode the move is an unphysical SWAP straight across the
+        global register: no entanglement is consumed and no noise is
+        introduced, which is what makes this backend a *correctness*
+        reference rather than a model of a network.
+
+        Args:
+            op: The send half of the transfer, for error reporting.
+            source: Global index of the sender's qubit.
+            target: Global index of the receiver's qubit.
+
+        Raises:
+            NotImplementedError: When ``transfer_mode`` is ``"teleport"``.
+        """
+        if self._config.transfer_mode != "swap":
+            raise NotImplementedError(
+                f"transfer_mode={self._config.transfer_mode!r} is not "
+                f"implemented for the Aer backend; use 'swap'.")
+        self._global_circuit.swap(source, target)
 
     def _translate_qscatter(self, op: QScatter) -> None:
         """
@@ -320,3 +359,137 @@ class AerCircuitAdapter(Circuit):
         """
         super().translate(op)
         return self._global_circuit
+
+
+# ----------------------------------------------------------------------
+# Joint translation
+# ----------------------------------------------------------------------
+
+def _transfer_partners(blocked: Dict[int, Operation]
+                       ) -> Optional[Tuple[str, Tuple[int, QSend], Tuple[int, QRecv]]]:
+    """
+    Find a transfer whose two halves are both waiting.
+
+    Args:
+        blocked: The operation each rank is stopped on, keyed by rank.
+
+    Returns:
+        ``(tag, (source_rank, qsend), (target_rank, qrecv))`` for the first
+        matched transfer, or ``None`` when nothing can be paired.
+    """
+    sends: Dict[str, Tuple[int, QSend]] = {}
+    recvs: Dict[str, Tuple[int, QRecv]] = {}
+    for rank, op in blocked.items():
+        if isinstance(op, QSend):
+            sends[op.tag] = (rank, op)
+        elif isinstance(op, QRecv):
+            recvs[op.tag] = (rank, op)
+
+    for tag in sorted(sends):
+        if tag in recvs:
+            return tag, sends[tag], recvs[tag]
+    return None
+
+
+def _deadlock_error(blocked: Dict[int, Operation], ranks: List[int]) -> RuntimeError:
+    """
+    Describe a set of transfers that can never pair up.
+
+    Args:
+        blocked: The operation each rank is stopped on, keyed by rank.
+        ranks: Every rank of the group.
+
+    Returns:
+        An error naming what each stuck rank is waiting for.
+    """
+    lines = []
+    for rank in sorted(blocked):
+        op = blocked[rank]
+        if isinstance(op, QSend):
+            lines.append(f"  rank {rank} is sending qubits {op.qubits} to "
+                         f"rank {op.dest_rank} (tag {op.tag})")
+        elif isinstance(op, QRecv):
+            lines.append(f"  rank {rank} is receiving qubits {op.qubits} from "
+                         f"rank {op.src_rank} (tag {op.tag})")
+        else:
+            lines.append(f"  rank {rank} is blocked on {type(op).__name__}, "
+                         f"which the Aer adapter cannot pair")
+    return RuntimeError(
+        "The ranks blocked on transfers that never match, so the program "
+        "cannot be ordered:\n" + "\n".join(lines) +
+        f"\nEvery qsend needs a qrecv on the destination rank, and vice "
+        f"versa, among the {len(ranks)} ranks of this run {ranks}.")
+
+
+def translate_group(adapters: Dict[int, "AerCircuitAdapter"]) -> None:
+    """
+    Translate the circuits of a whole group of ranks into the global circuit.
+
+    Aer runs every rank inside a single ``QuantumCircuit``, so the order in
+    which instructions are appended *is* the order in which they execute.
+    Translating one rank fully and then the next therefore only works when
+    the program's cross-rank dependencies happen to follow rank order: a
+    chain 0 -> 1 -> 2 survives it, while a control that returns to rank 0
+    between hops does not, and the run then produces a wrong answer with no
+    error raised.
+
+    This pass instead interleaves the ranks the way they would really run.
+    Each rank advances through its own operations until it reaches a
+    transfer; once both halves of a transfer are waiting, the qubit is moved
+    and both ranks resume. The result is an emission order that respects
+    every dependency the program expressed.
+
+    Pairing a ``qsend`` with its ``qrecv`` also supplies what a single-rank
+    pass cannot: the receiver's own qubit index. The transfer moves the
+    state from the sender's slot to the slot the *receiver* asked for,
+    instead of assuming both sides chose the same local index.
+
+    Args:
+        adapters: Circuit adapter of every rank, keyed by rank.
+
+    Raises:
+        RuntimeError: If the ranks block on transfers that never match — the
+            trace-time equivalent of a deadlock — or if a matched pair
+            disagrees on how many qubits it moves.
+    """
+    ranks = sorted(adapters)
+    streams = {rank: list(adapters[rank].ops.flatten()) for rank in ranks}
+    cursors = {rank: 0 for rank in ranks}
+
+    while True:
+        # Every rank runs ahead on its own until it hits a transfer.
+        for rank in ranks:
+            stream = streams[rank]
+            while cursors[rank] < len(stream) and not isinstance(
+                stream[cursors[rank]], (QSend, QRecv)
+            ):
+                adapters[rank].translate(stream[cursors[rank]])
+                cursors[rank] += 1
+
+        blocked = {rank: streams[rank][cursors[rank]]
+                   for rank in ranks if cursors[rank] < len(streams[rank])}
+        if not blocked:
+            return
+
+        matched = _transfer_partners(blocked)
+        if matched is None:
+            raise _deadlock_error(blocked, ranks)
+
+        tag, (source_rank, send_op), (target_rank, recv_op) = matched
+
+        if len(send_op.qubits) != len(recv_op.qubits):
+            raise RuntimeError(
+                f"Transfer {tag} moves {len(send_op.qubits)} qubit(s) out of "
+                f"rank {source_rank} but rank {target_rank} receives "
+                f"{len(recv_op.qubits)}.")
+
+        sender, receiver = adapters[source_rank], adapters[target_rank]
+        for out_qubit, in_qubit in zip(send_op.qubits, recv_op.qubits):
+            sender.emit_transfer(
+                send_op,
+                out_qubit + sender.qubit_offset,
+                in_qubit + receiver.qubit_offset,
+            )
+
+        cursors[source_rank] += 1
+        cursors[target_rank] += 1

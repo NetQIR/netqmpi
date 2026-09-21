@@ -43,6 +43,12 @@ todos los adaptadores, contando solo la llamada más externa para no cobrar
 dos veces la recursión sobre el `OperationContainer`. `backend` se mide
 envolviendo una llamada por backend (`profiler.BACKEND_PROBES`).
 
+Una pasada de traducción *conjunta* (la de Aer y la de CUNQA, que necesitan
+todos los ranks a la vez para emparejar transferencias o expandir un
+colectivo) hace parte de su trabajo fuera de `Circuit.translate`, así que se
+envuelve también como ámbito externo de traducción, con la misma guarda de
+reentrada para no contar dos veces las llamadas por operación que hace dentro.
+
 `trace` se mide **directamente**, no por resta, y esto importa más de lo que
 parece. Todo lo que hace un backend —traducir, simular y sincronizar los
 ranks— ocurre dentro del `__exit__` del comunicador, así que cronometrar el
@@ -212,10 +218,15 @@ real antes de matar el proceso.
 
 # Resultados
 
+> **Estos números son los de la rama `fix-aer-backend`**, con los tres
+> defectos del adaptador de Aer descritos en §1 ya corregidos. La medición
+> previa, con el adaptador tal y como estaba, se conserva en la rama
+> `benchmark-multibackend`; las diferencias se señalan abajo.
+
 Rejilla de esta ejecución: Aer 2–6 ranks × 1–3 qubits/rank (1024 shots),
-CUNQA 2–7 ranks × 1–2 qubits/rank (1024 shots), Qoala 2–4 ranks (100 shots),
+CUNQA 2–5 ranks × 1–2 qubits/rank (1024 shots), Qoala 2–4 ranks (100 shots),
 NetQASM 2–3 ranks (10 shots). 3 repeticiones de tiempo más una pasada de
-memoria por configuración; **474 registros** en
+memoria por configuración; **324 registros** en
 [`results/raw.jsonl`](results/raw.jsonl). Tablas completas en
 [`results/report.md`](results/report.md), coeficientes en
 [`results/model.json`](results/model.json).
@@ -225,7 +236,7 @@ memoria por configuración; **474 registros** en
 | app | aer | cunqa | qoala | netqasm |
 |---|---|---|---|---|
 | `cascade` | OK | OK | OK | error |
-| `ghz` | **WRONG** 0.10–1.00 | OK | n/i | – |
+| `ghz` | OK | OK | n/i | – |
 | `qft` | OK | OK | n/i | – |
 | `qft_telegate` | n/i | OK | n/i | – |
 
@@ -235,43 +246,59 @@ respuesta equivocada en un backend **sin modelo de ruido**, donde cualquier
 cosa por debajo de un eco perfecto es un fallo de traducción, no
 decoherencia.
 
-**El resultado principal es incómodo y hay que decirlo con claridad: hoy
-«un código, varios backends» solo se cumple del todo en CUNQA.** El único
-primitivo de comunicación que implementan los cuatro adaptadores es
-`qsend`/`qrecv`. Lo que se encontró, backend por backend:
+**Aer ejecuta ahora correctamente las tres sondas portables**; antes de los
+arreglos de esta rama fallaba `ghz` en silencio (§1, Aer). Sigue sin haber
+un backend salvo CUNQA que implemente `expose`/`unexpose`, así que el único
+primitivo de comunicación común a los cuatro adaptadores es `qsend`/`qrecv`.
+Backend por backend:
 
 - **CUNQA** — ejecuta las cuatro sondas con F = 1.0000. Es el único que
   implementa `expose`/`unexpose`, y por tanto el único donde se puede
   comparar telegate contra teledata.
-- **Aer** — dos limitaciones reales del adaptador, ninguna documentada:
-  1. `_translate_qrecv` es un **no-op** y `_translate_qsend` intercambia el
-     qubit al **mismo índice local** del rank destino, ignorando el índice
-     que pide el receptor ([`aer_circuit.py:184`](../../netqmpi/runtime/adapters/aer/aer_circuit.py#L184)).
-     Un programa donde emisor y receptor usan índices distintos significa
-     cosas distintas según el backend. Las apps de este benchmark hacen
-     viajar el control por una ranura *scratch* con el mismo índice en
-     ambos lados para sortearlo.
-  2. El adaptador traduce **rank por rank** en orden de rank
-     ([`aer_communicator.py:108`](../../netqmpi/runtime/adapters/aer/aer_communicator.py#L108)),
-     así que las dependencias entre ranks se pierden salvo que el programa
-     resulte seguir ese mismo orden. `cascade` (cadena monótona) funciona
-     por casualidad; `ghz` (estrella, el control vuelve a rank 0 entre
-     saltos) **da resultados incorrectos en todas las configuraciones salvo
-     la trivial**: acierta con 2 ranks × 1 qubit y a partir de ahí cae a
-     F = 0.12–0.23, sin lanzar ningún error ni aviso. Es el hallazgo más
-     serio del benchmark, porque **falla en silencio**: un usuario que
-     desarrolle en Aer y despliegue en CUNQA obtiene dos respuestas
-     distintas y nada le avisa de cuál es la buena.
+- **Aer** — tenía tres defectos, **los tres corregidos en esta rama**:
+  1. *Resultados silenciosamente incorrectos.* El adaptador traducía **rank
+     por rank** en orden de rank, y como Aer ejecuta todos los ranks dentro
+     de un único `QuantumCircuit`, el orden de emisión *es* el orden de
+     ejecución: todas las puertas de rank 0 antes que ninguna de rank 1. Eso
+     solo funciona si las dependencias del programa siguen el orden de rank.
+     `cascade` (cadena monótona 0→1→2) sobrevivía por casualidad; `ghz`
+     (estrella, el control vuelve a rank 0 entre saltos) devolvía la
+     respuesta equivocada **sin lanzar ningún error**: F = 1.000 solo en el
+     caso trivial 2 ranks × 1 qubit, y 0.12–0.23 en todo lo demás.
 
-     | | q=1 | q=2 | q=3 |
-     |---|---|---|---|
-     | **n=2** | 1.000 | 0.228 | 0.234 |
-     | **n=3** | 0.235 | 0.124 | 0.121 |
-     | **n=4** | 0.229 | 0.120 | — |
-  3. `transfer_mode="teleport"` está documentado en la configuración pero
-     lanza `NotImplementedError`; solo existe `"swap"`, que es no físico
-     (sin EPR, sin ruido). Por eso Aer vale como **referencia de corrección**,
-     no como medida de fidelidad.
+     Ahora `translate_group` intercala los ranks como se ejecutarían de
+     verdad: cada uno avanza por sus operaciones hasta llegar a una
+     transferencia, y cuando las dos mitades están esperando se mueve el
+     qubit y ambos continúan. Las tres sondas portables dan **F = 1.0000 en
+     todas las configuraciones** (2–6 ranks × 1–3 qubits/rank).
+  2. *El receptor no elegía dónde aterrizaba el qubit.* `_translate_qrecv`
+     era un **no-op** y `_translate_qsend` intercambiaba al **mismo índice
+     local** del rank destino, ignorando el índice que pedía el receptor.
+     Emparejar `qsend` con su `qrecv` aporta justo el dato que faltaba, así
+     que la transferencia va ahora del hueco del emisor al que pidió el
+     receptor. Las apps de este benchmark hacen viajar el control por una
+     ranura *scratch* con el mismo índice en ambos lados para sortear el
+     fallo antiguo; **ese rodeo ya no hace falta**, pero se conserva para
+     que las cifras sigan siendo comparables con la medición previa.
+  3. *`transfer_mode="teleport"` documentado pero inexistente.* Se ha
+     corregido la **documentación**, no añadido el modo: sobre un simulador
+     sin ruido un circuito de teleportación devuelve exactamente lo mismo
+     que el SWAP, solo que con más puertas y dos ancillas por transferencia.
+     Implementarlo únicamente tiene sentido junto con un modelo de ruido de
+     Aer, que hoy no existe en `AerSimulatorConfig`.
+
+  Además, un fallo dentro del hilo designado (transferencia sin pareja,
+  puerta no soportada) dejaba a los demás ranks esperando en una barrera
+  **para siempre**: el proceso se colgaba en vez de decir qué había pasado.
+  Ahora se captura, se libera la barrera y el executor lo relanza.
+
+  Como efecto colateral, Aer detecta ahora desemparejamientos que antes
+  pasaban desapercibidos. `examples/1_send_recv.py` ejecutado con `-n 3`
+  (está documentado para `-n 2`) deja un `qrecv` de rank 2 sin `qsend` que
+  lo alimente; antes el no-op lo ignoraba y rank 2 medía su propio `|0⟩`,
+  ahora se reporta con los ranks y el tag implicados. Es el mismo contrato
+  que ya aplicaba `check_transfers` en CUNQA.
+
 - **Qoala** — solo `cascade`. Faltan `expose`/`unexpose`, `SWAP` y
   controlled-P. Además **`cx` y `cz` son inalcanzables**: el SDK emite
   `ControlledGate(control, Gate('X'))` pero el adaptador compara contra
@@ -291,26 +318,33 @@ primitivo de comunicación que implementan los cuatro adaptadores es
 
 | backend | configs | total en frío | total en caliente | NetQMPI | cuota |
 |---|---|---|---|---|---|
-| aer | 45 | 0.326 s | 0.0165 s | 1.20 ms | **8.11%** |
-| cunqa | 24 | 4.804 s | 4.6261 s | 0.64 ms | **0.02%** |
+| aer | 45 | 0.317 s | 0.0148 s | 1.23 ms | **9.41%** |
+| cunqa | 24 | 4.795 s | 4.6838 s | 3.42 ms | **0.07%** |
 | qoala | 3 | 3.137 s | 2.3921 s | 0.16 ms | **0.01%** |
 
-En términos absolutos NetQMPI cuesta **entre 0.16 y 1.2 ms** por ejecución.
+En términos absolutos NetQMPI cuesta **entre 0.16 y 3.4 ms** por ejecución.
 Lo que cambia entre backends no es ese coste, sino contra qué se compara:
-Aer termina en 16 ms, CUNQA y Qoala tardan segundos.
+Aer termina en 15 ms, CUNQA y Qoala tardan segundos.
 
 ![Cuota de NetQMPI frente al total](results/overhead_share.png)
 
 Los puntos se separan en dos regímenes a ambos lados de la línea del 1%.
-Con Aer sobre circuitos diminutos la abstracción es el 3–25% del reloj;
-en cuanto hay una simulación de verdad detrás (CUNQA, Qoala) cae a
-**0.004–0.4%**. No hay ningún punto intermedio en esta rejilla: el cruce ya
-ha ocurrido para cualquier carga no trivial.
+Con Aer sobre circuitos diminutos la abstracción es el **2.8–35.8%** del
+reloj; en cuanto hay una simulación de verdad detrás cae a **0.006–0.93%**
+en CUNQA y **0.006–0.01%** en Qoala. No hay ningún punto intermedio en esta
+rejilla: el cruce ya ha ocurrido para cualquier carga no trivial.
 
 El coste **en frío** es otra cosa y conviene no esconderlo: la primera
-ejecución de un proceso paga 0.33 s en Aer (dominado por `import qiskit_aer`)
-y 4.8 s en CUNQA (dominado por el `qraise`/SLURM que levanta los vQPUs). Eso
-no es NetQMPI, pero es lo que paga quien ejecuta un programa una sola vez.
+ejecución de un proceso paga 0.32 s en Aer (dominado por importar Qiskit) y
+4.8 s en CUNQA (dominado por el `qraise`/SLURM que levanta los vQPUs). Eso no
+es NetQMPI, pero es lo que paga quien ejecuta un programa una sola vez.
+
+> Esos imports de Qiskit se hacían **perezosamente dentro de
+> `create_circuit`**, es decir en mitad del `main()` del usuario, así que el
+> profiler los leía como ~0.8 s de *trazado*. Se han subido a nivel de módulo
+> en `aer_executor.py`: el paquete solo se importa cuando la ejecución ya ha
+> elegido Aer, así que no había nada que ganar difiriéndolos, y diferirlos
+> falseaba la atribución de fases.
 
 ## 3. El modelo de coste
 
@@ -318,42 +352,43 @@ no es NetQMPI, pero es lo que paga quien ejecuta un programa una sola vez.
 
 | backend | α (ms) | β (µs/op) | R² | configs |
 |---|---|---|---|---|
-| aer | 0.619 | 10.32 | **0.974** | 45 |
-| cunqa | −0.720 | 40.43 | 0.714 | 24 |
+| aer | 0.370 | 15.33 | **0.983** | 45 |
+| cunqa | −1.589 | 135.45 | 0.767 | 24 |
 | qoala | 0.018 | 16.12 | 1.000 † | 3 |
-| pooled | 0.537 | 12.00 | 0.612 | 72 |
 
 † 3 configuraciones contra 2 parámetros libres: los coeficientes son
 indicativos, el R² no es evidencia.
 
-El ajuste de Aer confirma la forma esperada con **R² = 0.974**: un coste fijo
-de **0.62 ms** más **10.3 µs por operación**. El de CUNQA es más ruidoso
-(R² = 0.71, α negativo, que es un artefacto del ajuste) por una razón
-mecánica: se está midiendo una cantidad de ~0.6 ms dentro de una ejecución de
-~4.6 s, es decir el 0.01%, al borde de la resolución y con el jitter de SLURM
-y ZMQ encima.
+El ajuste de Aer confirma la forma esperada con **R² = 0.983**: un coste fijo
+de **0.37 ms** más **15.3 µs por operación**. El de CUNQA es más ruidoso
+(R² = 0.77, α negativo, que es un artefacto del ajuste) por una razón
+mecánica: se está midiendo una cantidad de ~3 ms dentro de una ejecución de
+~4.7 s, es decir el 0.07%, al borde de la resolución y con el jitter de SLURM
+y ZMQ encima; su recta además la arrastra una única configuración de mucha
+varianza (`qft_telegate`, 5 ranks × 2 qubits). **No se ajusta una recta
+agregada sobre los tres backends**: sus pendientes difieren en un orden de
+magnitud, así que un ajuste conjunto no describe a ninguno.
 
 Separando puertas locales de primitivas de comunicación:
 
 | backend | α (ms) | β (µs/op local) | γ (µs/op comm) | γ/β | R² |
 |---|---|---|---|---|---|
-| aer | 0.614 | 6.57 | 14.57 | **2.2×** | 0.976 |
-| pooled | 0.519 | 4.85 | 20.07 | 4.1× | 0.616 |
+| aer | 0.366 | 11.62 | 19.54 | **1.7×** | 0.984 |
 
-**Traducir un acto de comunicación cuesta 2.2 veces lo que una puerta local**
-(Aer, R² = 0.976), que es exactamente lo que cabe esperar: un `qsend` no se
-convierte en una instrucción sino en un protocolo de teleportación entero.
-El ajuste de CUNQA para este modelo sale degenerado (γ negativo): sus dos
-regresores están demasiado correlacionados en una rejilla de un solo qubit
-por rank.
+**Traducir un acto de comunicación cuesta 1.7 veces lo que una puerta local**
+(Aer, R² = 0.984), que es lo que cabe esperar: un `qsend` no se convierte en
+una instrucción sino en una transferencia que hay que emparejar con su
+`qrecv` y ordenar contra los demás ranks. El ajuste de CUNQA para este
+modelo sale degenerado (γ negativo): sus dos regresores están demasiado
+correlacionados en una rejilla de un solo qubit por rank.
 
 ## 4. Fidelidad
 
 ![Fidelidad por app y backend](results/fidelity.png)
 
-CUNQA y Qoala devuelven el eco exacto (F = 1.0000) en todo lo que ejecutan.
-Aer también, salvo `ghz`, donde el orden de traducción rank a rank rompe el
-programa (§1). No hay aquí una comparación de *ruido* entre backends: Aer y
+Los tres backends que ejecutan devuelven el eco exacto (F = 1.0000) en todo
+lo que ejecutan. Con el adaptador de Aer sin corregir, `ghz` daba
+F = 0.12–0.23 (§1). No hay aquí una comparación de *ruido* entre backends: Aer y
 CUNQA simulan sin modelo de ruido en esta configuración, y Qoala solo llegó a
 ejecutar una de las cuatro sondas. Medir degradación por decoherencia exige
 activar los modelos de hardware de Qoala — que es justo lo que hacen los
