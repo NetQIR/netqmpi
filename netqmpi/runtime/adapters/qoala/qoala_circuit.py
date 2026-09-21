@@ -283,8 +283,16 @@ class QoalaCircuitAdapter(Circuit):
 
     def _gate_lines(self, op: Gate) -> List[str]:
         """Translate a single-qubit gate into one NetQASM instruction."""
-        q = op.qubits[0]
         name = op.name
+
+        # The SDK records a swap as a plain Gate over two qubits, so it
+        # arrives here rather than through the controlled-gate table. NetQASM
+        # has no swap instruction; three CNOTs are the standard stand-in.
+        if name == "SWAP":
+            a, b = op.qubits[0], op.qubits[1]
+            return [f"cnot Q{a} Q{b}", f"cnot Q{b} Q{a}", f"cnot Q{a} Q{b}"]
+
+        q = op.qubits[0]
         direct = {"H": "h", "X": "x", "Y": "y", "Z": "z"}
         if name in direct:
             return [f"{direct[name]} Q{q}"]
@@ -311,10 +319,23 @@ class QoalaCircuitAdapter(Circuit):
         control = op.controls[0]
         target_gate = op.targets[0]
         target = target_gate.qubits[0]
-        if target_gate.name == "RX":
+
+        # The SDK records a CNOT as a controlled Gate('X') and a CZ as a
+        # controlled Gate('Z'). This table was written against "RX" and
+        # "RZ", which nothing in the SDK ever emits, so both of the gates it
+        # meant to support were unreachable — and a crz(theta), which does
+        # emit a controlled Gate('RZ'), fell through to the "RZ" branch and
+        # came out as a plain CZ whatever the angle was.
+        if target_gate.name == "X":
             return [f"cnot Q{control} Q{target}"]
-        if target_gate.name == "RZ":
+        if target_gate.name == "Z":
             return [f"cphase Q{control} Q{target}"]
+        if target_gate.name == "RZ":
+            raise NotImplementedError(
+                "Controlled-RZ is not implemented for the Qoala backend: "
+                "NetQASM offers cphase, which is a controlled-Z rather than "
+                "a controlled rotation, so emitting it would silently ignore "
+                "the angle.")
         raise NotImplementedError(
             f"Controlled-{target_gate.name} is not implemented for the Qoala backend yet."
         )
