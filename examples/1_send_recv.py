@@ -47,6 +47,5 @@ def main(env: Environment = None):
     # The circuits of all the ranks are submitted together when the last
     # rank leaves the block, so only that rank sees the results here — and
     # it sees every rank's counts, keyed by rank.
-    if comm.results:
-        for other, counts in comm.results.items():
-            print(f"rank_{other}: {counts}")
+    if rank == comm.size - 1 and comm.results:
+        print(comm.results)

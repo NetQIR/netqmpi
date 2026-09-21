@@ -186,16 +186,17 @@ def test_gather():
 # 5 — a 3-qubit QFT built out of telegates
 # ----------------------------------------------------------------------
 
-@pytest.mark.xfail(raises=NotImplementedError, strict=True,
-                   reason="the Aer adapter does not implement expose/unexpose")
 def test_qft_expose():
     """
     The QFT of ``|000>`` is ``|+++>``, so every rank reads an even split.
 
-    Marked ``xfail(strict=True)``: it is expected to fail today because the
-    adapter refuses ``expose``, and it will start failing *loudly* the day
-    that is implemented — which is exactly when this expectation wants
-    checking.
+    Note what this does *not* check: on the all-zero input every control is
+    ``|0>`` when its rotation is applied, so the controlled phases are
+    no-ops and an adapter that dropped them entirely would still pass. What
+    it does establish is that the telegate windows leave the register
+    intact. The rotations themselves are pinned by the echo probe in
+    ``scripts/benchmark/apps/qft_telegate.py``, where undoing the transform
+    makes every one of them observable.
     """
     results = run_example("5_qft_expose", 3)
     for rank in range(3):

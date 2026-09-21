@@ -20,6 +20,7 @@ from netqmpi.sdk.operations import (
     Measure, Reset, Barrier,
     OperationContainer,
     QSend, QRecv, QScatter, QGather, Expose, Unexpose,
+    CollectiveOperation,
 )
 
 if TYPE_CHECKING:
@@ -41,6 +42,11 @@ class AerCircuitAdapter(Circuit):
     one each — so where a slice starts cannot be known from the rank index
     alone. :meth:`assign_slice` fills the offsets in once the layout is
     settled.
+
+    A *communication* qubit belongs to no slice at all. It addresses a
+    control another rank has lent through an open ``expose`` window, and
+    :meth:`_global` resolves it to that rank's data qubit for as long as the
+    window is open.
     """
 
     def __init__(
@@ -62,6 +68,10 @@ class AerCircuitAdapter(Circuit):
         self._offset = 0
         self._clbit_offset = 0
         self._config = comm._config
+        # Communication-qubit slots currently holding a control lent by
+        # another rank, mapped to the global qubit that control lives on.
+        # Filled by an expose window and emptied by the matching unexpose.
+        self._borrowed: Dict[int, int] = {}
 
     def assign_slice(self, global_circuit: "QuantumCircuit",
                      qubit_offset: int, clbit_offset: int) -> None:
@@ -85,6 +95,64 @@ class AerCircuitAdapter(Circuit):
     # Translation methods
     # ------------------------------------------------------------------
 
+    def _global(self, qubit: int) -> int:
+        """
+        Map a NetQMPI qubit index onto its index in the global circuit.
+
+        Data qubits sit in this rank's own slice. A communication qubit is
+        not a qubit of this rank at all: it addresses a control another rank
+        has lent through an open expose window, so it resolves to that
+        rank's data qubit.
+
+        Args:
+            qubit: Data qubit index, or a communication qubit as returned by
+                :meth:`~netqmpi.sdk.circuit.Circuit.comm_qubit`.
+
+        Returns:
+            The qubit index in the global circuit.
+
+        Raises:
+            RuntimeError: If a communication qubit is used outside the expose
+                window that lent it.
+        """
+        if qubit < self._num_qubits:
+            return qubit + self._offset
+
+        slot = qubit - self._num_qubits
+        borrowed = self._borrowed.get(slot)
+        if borrowed is None:
+            raise RuntimeError(
+                f"rank {self._comm.rank} used communication qubit {qubit} "
+                f"(slot {slot}) with no expose window open on it.")
+        return borrowed
+
+    # ------------------------------------------------------------------
+    # Telegate windows, opened and closed by the joint pass
+    # ------------------------------------------------------------------
+
+    def lend_control(self, slot: int, control: int) -> None:
+        """
+        Point a communication-qubit slot at the control another rank lent.
+
+        Args:
+            slot: Communication-qubit slot reserved by the expose.
+            control: Global index of the root's exposed data qubit.
+        """
+        self._borrowed[slot] = control
+
+    def release_control(self, slot: int) -> None:
+        """
+        Close a slot opened by :meth:`lend_control`.
+
+        Args:
+            slot: Communication-qubit slot the window reserved.
+        """
+        self._borrowed.pop(slot, None)
+
+    # ------------------------------------------------------------------
+    # Translation methods
+    # ------------------------------------------------------------------
+
     def _translate_gate(self, op: Gate) -> None:
         """
         Translate a single-qubit (or two-qubit SWAP) gate.
@@ -92,7 +160,7 @@ class AerCircuitAdapter(Circuit):
         Args:
             op: Gate operation to translate.
         """
-        q = op.qubits[0] + self._offset
+        q = self._global(op.qubits[0])
         gate_map = {
             "H":    lambda: self._global_circuit.h(q),
             "X":    lambda: self._global_circuit.x(q),
@@ -106,8 +174,8 @@ class AerCircuitAdapter(Circuit):
             "RY":   lambda: self._global_circuit.ry(op.params[0], q),
             "RZ":   lambda: self._global_circuit.rz(op.params[0], q),
             "SWAP": lambda: self._global_circuit.swap(
-                op.qubits[0] + self._offset,
-                op.qubits[1] + self._offset,
+                self._global(op.qubits[0]),
+                self._global(op.qubits[1]),
             ),
         }
         if op.name in gate_map:
@@ -121,8 +189,8 @@ class AerCircuitAdapter(Circuit):
             op: Controlled gate operation to translate.
         """
         target_name = op.targets[0].name
-        ctrl = [c + self._offset for c in op.controls]
-        tgt = [q + self._offset for q in op.targets[0].qubits]
+        ctrl = [self._global(c) for c in op.controls]
+        tgt = [self._global(q) for q in op.targets[0].qubits]
 
         if target_name == "X":
             if len(ctrl) == 1:
@@ -156,7 +224,7 @@ class AerCircuitAdapter(Circuit):
             op: Measurement operation to translate.
         """
         self._global_circuit.measure(
-            op.qubits[0] + self._offset,
+            self._global(op.qubits[0]),
             op.cbit + self._clbit_offset,
         )
 
@@ -167,7 +235,7 @@ class AerCircuitAdapter(Circuit):
         Args:
             op: Reset operation to translate.
         """
-        self._global_circuit.reset(op.qubits[0] + self._offset)
+        self._global_circuit.reset(self._global(op.qubits[0]))
 
     def _translate_barrier(self, op: Barrier) -> None:
         """
@@ -177,7 +245,7 @@ class AerCircuitAdapter(Circuit):
             op: Barrier operation to translate.
         """
         if op.qubits:
-            global_qubits = [q + self._offset for q in op.qubits]
+            global_qubits = [self._global(q) for q in op.qubits]
         else:
             global_qubits = list(range(self._offset, self._offset + self._num_qubits))
         self._global_circuit.barrier(global_qubits)
@@ -301,31 +369,40 @@ class AerCircuitAdapter(Circuit):
 
     def _translate_expose(self, op: Expose) -> None:
         """
-        Translate an expose operation.
+        Reject a telegate window reached outside the joint translation pass.
+
+        An expose is collective: the root says which qubit it lends and every
+        receiver says which slot it lends into, and none of that is knowable
+        from one rank's stream. :func:`translate_group` is the supported
+        entry point.
 
         Args:
             op: Expose operation to translate.
 
         Raises:
-            NotImplementedError: Always; not yet implemented for this backend.
+            RuntimeError: Always.
         """
-        raise NotImplementedError(
-            "Expose is not yet implemented for the Aer backend."
-        )
+        raise RuntimeError(
+            f"expose (tag {op.tag}) cannot be translated on its own: the Aer "
+            f"adapter needs every participant's stream at once to open a "
+            f"telegate window. Use translate_group().")
 
     def _translate_unexpose(self, op: Unexpose) -> None:
         """
-        Translate an unexpose operation.
+        Reject a telegate window reached outside the joint translation pass.
+
+        See :meth:`_translate_expose`.
 
         Args:
             op: Unexpose operation to translate.
 
         Raises:
-            NotImplementedError: Always; not yet implemented for this backend.
+            RuntimeError: Always.
         """
-        raise NotImplementedError(
-            "Unexpose is not yet implemented for the Aer backend."
-        )
+        raise RuntimeError(
+            f"unexpose (tag {op.tag}) cannot be translated on its own: the "
+            f"Aer adapter needs every participant's stream at once to close a "
+            f"telegate window. Use translate_group().")
 
     # ------------------------------------------------------------------
     # Dispatch table (mirrors the pattern in CunqaCircuitAdapter)
@@ -381,6 +458,11 @@ class AerCircuitAdapter(Circuit):
 # Joint translation
 # ----------------------------------------------------------------------
 
+#: Operations a rank cannot emit on its own: they need a partner rank to be
+#: sitting on the matching call before anything can be written out.
+BLOCKING = (QSend, QRecv, CollectiveOperation)
+
+
 def _transfer_partners(blocked: Dict[int, Operation]
                        ) -> Optional[Tuple[str, Tuple[int, QSend], Tuple[int, QRecv]]]:
     """
@@ -407,9 +489,75 @@ def _transfer_partners(blocked: Dict[int, Operation]
     return None
 
 
+def _ready_collective(blocked: Dict[int, Operation]
+                      ) -> Optional[CollectiveOperation]:
+    """
+    Find a collective every one of its participants is waiting on.
+
+    Args:
+        blocked: The operation each rank is stopped on, keyed by rank.
+
+    Returns:
+        The first collective whose whole group has arrived, or ``None``.
+    """
+    for rank in sorted(blocked):
+        op = blocked[rank]
+        if not isinstance(op, CollectiveOperation):
+            continue
+        if all(other in blocked and op.matches(blocked[other])
+               for other in op.ranks):
+            return op
+    return None
+
+
+def _open_window(adapters: Dict[int, "AerCircuitAdapter"],
+                 blocked: Dict[int, Operation], op: Expose) -> None:
+    """
+    Open a telegate window: lend the root's control to every receiver.
+
+    A real backend shares the control through a GHZ state — CUNQA's
+    cat-entangler — so that each receiver holds a computational-basis copy
+    it can use as a local control, and hands it back untouched. Aer runs
+    every rank inside one circuit, so the copy is unnecessary: a receiver's
+    controlled gate is emitted against the root's own qubit directly.
+
+    That is exact rather than approximate. A telegate reads its control only
+    in the computational basis, which is precisely why the cat-entangled
+    copy can stand in for the original; running it the other way round is
+    equally faithful. It is also unphysical in the same way this adapter's
+    ``qsend`` is: no entanglement is consumed and no correction is sent,
+    which keeps Aer a correctness reference rather than a model of a
+    network.
+
+    Args:
+        adapters: Circuit adapter of every rank, keyed by rank.
+        blocked: The operation each rank is stopped on, keyed by rank.
+        op: Any participant's record of the window being opened.
+    """
+    root_record = blocked[op.root]
+    control = adapters[op.root].qubit_offset + root_record.data_qubit
+
+    for receiver in op.ranks[1:]:
+        adapters[receiver].lend_control(blocked[receiver].comm_slot, control)
+
+
+def _close_window(adapters: Dict[int, "AerCircuitAdapter"],
+                  blocked: Dict[int, Operation], op: Unexpose) -> None:
+    """
+    Close a telegate window, giving the root its control back.
+
+    Args:
+        adapters: Circuit adapter of every rank, keyed by rank.
+        blocked: The operation each rank is stopped on, keyed by rank.
+        op: Any participant's record of the window being closed.
+    """
+    for receiver in op.ranks[1:]:
+        adapters[receiver].release_control(blocked[receiver].comm_slot)
+
+
 def _deadlock_error(blocked: Dict[int, Operation], ranks: List[int]) -> RuntimeError:
     """
-    Describe a set of transfers that can never pair up.
+    Describe a set of calls that can never pair up.
 
     Args:
         blocked: The operation each rank is stopped on, keyed by rank.
@@ -427,14 +575,21 @@ def _deadlock_error(blocked: Dict[int, Operation], ranks: List[int]) -> RuntimeE
         elif isinstance(op, QRecv):
             lines.append(f"  rank {rank} is receiving qubits {op.qubits} from "
                          f"rank {op.src_rank} (tag {op.tag})")
+        elif isinstance(op, CollectiveOperation):
+            waiting = [r for r in op.ranks
+                       if r not in blocked or not op.matches(blocked[r])]
+            lines.append(f"  rank {rank} is in {type(op).__name__.lower()} "
+                         f"over ranks {op.ranks} (tag {op.tag}), still "
+                         f"waiting for {waiting}")
         else:
             lines.append(f"  rank {rank} is blocked on {type(op).__name__}, "
                          f"which the Aer adapter cannot pair")
     return RuntimeError(
-        "The ranks blocked on transfers that never match, so the program "
-        "cannot be ordered:\n" + "\n".join(lines) +
-        f"\nEvery qsend needs a qrecv on the destination rank, and vice "
-        f"versa, among the {len(ranks)} ranks of this run {ranks}.")
+        "The ranks blocked on calls that never match, so the program cannot "
+        "be ordered:\n" + "\n".join(lines) +
+        f"\nEvery qsend needs a qrecv on the destination rank, and every "
+        f"expose and unexpose has to be reached by all of its participants, "
+        f"among the {len(ranks)} ranks of this run {ranks}.")
 
 
 def translate_group(adapters: Dict[int, "AerCircuitAdapter"]) -> None:
@@ -450,22 +605,25 @@ def translate_group(adapters: Dict[int, "AerCircuitAdapter"]) -> None:
     error raised.
 
     This pass instead interleaves the ranks the way they would really run.
-    Each rank advances through its own operations until it reaches a
-    transfer; once both halves of a transfer are waiting, the qubit is moved
-    and both ranks resume. The result is an emission order that respects
-    every dependency the program expressed.
+    Each rank advances through its own operations until it reaches something
+    it cannot emit alone — a transfer, or a collective — and that call is
+    expanded once every rank it involves is waiting on it, after which they
+    all resume. The result is an emission order that respects every
+    dependency the program expressed.
 
     Pairing a ``qsend`` with its ``qrecv`` also supplies what a single-rank
     pass cannot: the receiver's own qubit index. The transfer moves the
     state from the sender's slot to the slot the *receiver* asked for,
-    instead of assuming both sides chose the same local index.
+    instead of assuming both sides chose the same local index. An
+    ``expose`` likewise needs the root's record for the qubit being lent and
+    each receiver's for the slot it is lent into.
 
     Args:
         adapters: Circuit adapter of every rank, keyed by rank.
 
     Raises:
-        RuntimeError: If the ranks block on transfers that never match — the
-            trace-time equivalent of a deadlock — or if a matched pair
+        RuntimeError: If the ranks block on calls that never match — the
+            trace-time equivalent of a deadlock — or if a matched transfer
             disagrees on how many qubits it moves.
     """
     ranks = sorted(adapters)
@@ -473,11 +631,12 @@ def translate_group(adapters: Dict[int, "AerCircuitAdapter"]) -> None:
     cursors = {rank: 0 for rank in ranks}
 
     while True:
-        # Every rank runs ahead on its own until it hits a transfer.
+        # Every rank runs ahead on its own until it hits something it
+        # cannot emit without a partner.
         for rank in ranks:
             stream = streams[rank]
             while cursors[rank] < len(stream) and not isinstance(
-                stream[cursors[rank]], (QSend, QRecv)
+                stream[cursors[rank]], BLOCKING
             ):
                 adapters[rank].translate(stream[cursors[rank]])
                 cursors[rank] += 1
@@ -487,25 +646,57 @@ def translate_group(adapters: Dict[int, "AerCircuitAdapter"]) -> None:
         if not blocked:
             return
 
-        matched = _transfer_partners(blocked)
-        if matched is None:
+        transfer = _transfer_partners(blocked)
+        if transfer is not None:
+            _emit_transfer(adapters, *transfer)
+            cursors[transfer[1][0]] += 1
+            cursors[transfer[2][0]] += 1
+            continue
+
+        collective = _ready_collective(blocked)
+        if collective is None:
             raise _deadlock_error(blocked, ranks)
 
-        tag, (source_rank, send_op), (target_rank, recv_op) = matched
-
-        if len(send_op.qubits) != len(recv_op.qubits):
+        if isinstance(collective, Expose):
+            _open_window(adapters, blocked, collective)
+        elif isinstance(collective, Unexpose):
+            _close_window(adapters, blocked, collective)
+        else:
             raise RuntimeError(
-                f"Transfer {tag} moves {len(send_op.qubits)} qubit(s) out of "
-                f"rank {source_rank} but rank {target_rank} receives "
-                f"{len(recv_op.qubits)}.")
+                f"{type(collective).__name__} is not implemented for the Aer "
+                f"backend.")
 
-        sender, receiver = adapters[source_rank], adapters[target_rank]
-        for out_qubit, in_qubit in zip(send_op.qubits, recv_op.qubits):
-            sender.emit_transfer(
-                send_op,
-                out_qubit + sender.qubit_offset,
-                in_qubit + receiver.qubit_offset,
-            )
+        for rank in collective.ranks:
+            cursors[rank] += 1
 
-        cursors[source_rank] += 1
-        cursors[target_rank] += 1
+
+def _emit_transfer(adapters: Dict[int, "AerCircuitAdapter"], tag: str,
+                   source: Tuple[int, QSend], target: Tuple[int, QRecv]) -> None:
+    """
+    Move the qubits of one matched transfer across the global register.
+
+    Args:
+        adapters: Circuit adapter of every rank, keyed by rank.
+        tag: Identifier the two halves share, for error reporting.
+        source: The sending rank and its ``qsend`` record.
+        target: The receiving rank and its ``qrecv`` record.
+
+    Raises:
+        RuntimeError: If the two halves disagree on how many qubits move.
+    """
+    source_rank, send_op = source
+    target_rank, recv_op = target
+
+    if len(send_op.qubits) != len(recv_op.qubits):
+        raise RuntimeError(
+            f"Transfer {tag} moves {len(send_op.qubits)} qubit(s) out of "
+            f"rank {source_rank} but rank {target_rank} receives "
+            f"{len(recv_op.qubits)}.")
+
+    sender, receiver = adapters[source_rank], adapters[target_rank]
+    for out_qubit, in_qubit in zip(send_op.qubits, recv_op.qubits):
+        sender.emit_transfer(
+            send_op,
+            out_qubit + sender.qubit_offset,
+            in_qubit + receiver.qubit_offset,
+        )

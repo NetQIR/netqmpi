@@ -1,5 +1,5 @@
 """
-Regression tests for how the Aer adapter emits cross-rank transfers.
+Regression tests for how the Aer adapter emits cross-rank calls.
 
 Aer runs every rank inside one ``QuantumCircuit``, so the order in which
 instructions are appended *is* the order in which they execute. The adapter
@@ -136,6 +136,65 @@ ASYMMETRIC_INDICES = """
                 circuit.measure(i, i)
 """
 
+#: An exposed control driving a gate on another rank. Rank 0 lends its
+#: qubit, rank 1 uses it as the control of a CNOT, and the window closes.
+#: Rank 1 must end up holding whatever rank 0 was.
+REMOTE_CONTROL = """
+    from netqmpi.sdk.environment import Environment
+
+    def main(env: Environment = None):
+        comm, rank = env.comm, env.comm.rank
+        with comm:
+            circuit = env.create_circuit(num_qubits=1, num_clbits=1)
+            if rank == 0 and {payload}:
+                circuit.x(0)
+            handle = comm.expose(circuit, 0, [1], root=0)
+            if rank == 1:
+                circuit.cx(handle, 0)
+            comm.unexpose(circuit, [1], root=0)
+            circuit.measure(0, 0)
+"""
+
+#: One control lent to every other rank at once, the MPI_Bcast shape.
+FAN_OUT = """
+    from netqmpi.sdk.environment import Environment
+
+    def main(env: Environment = None):
+        comm, rank, size = env.comm, env.comm.rank, env.comm.size
+        receivers = list(range(1, size))
+        with comm:
+            circuit = env.create_circuit(num_qubits=1, num_clbits=1)
+            if rank == 0:
+                circuit.x(0)
+            handle = comm.expose(circuit, 0, receivers, root=0)
+            if rank in receivers:
+                circuit.cx(handle, 0)
+            comm.unexpose(circuit, receivers, root=0)
+            circuit.measure(0, 0)
+"""
+
+#: The root lends a superposition and must get it back untouched: the
+#: receiver applies its CNOT twice, which is the identity, so rank 0's |+>
+#: has to survive the window and map back to |0> under a final H.
+CONTROL_RETURNED = """
+    from netqmpi.sdk.environment import Environment
+
+    def main(env: Environment = None):
+        comm, rank = env.comm, env.comm.rank
+        with comm:
+            circuit = env.create_circuit(num_qubits=1, num_clbits=1)
+            if rank == 0:
+                circuit.h(0)
+            handle = comm.expose(circuit, 0, [1], root=0)
+            if rank == 1:
+                circuit.cx(handle, 0)
+                circuit.cx(handle, 0)
+            comm.unexpose(circuit, [1], root=0)
+            if rank == 0:
+                circuit.h(0)
+            circuit.measure(0, 0)
+"""
+
 #: A qsend whose qrecv was never traced. Nothing can pair it.
 DANGLING_SEND = """
     from netqmpi.sdk.environment import Environment
@@ -172,6 +231,34 @@ def test_unmatched_transfer_is_reported(tmp_path):
         run_app(DANGLING_SEND, 2, tmp_path)
 
 
+@pytest.mark.parametrize("payload, expected", [(0, 0.0), (1, 1.0)])
+def test_exposed_control_drives_a_remote_gate(payload, expected, tmp_path):
+    """A control lent by expose must actually control the receiver's gate."""
+    results = run_app(REMOTE_CONTROL.format(payload=payload), 2, tmp_path)
+    total = sum(results.values())
+    ones = sum(count for key, count in results.items()
+               if key.replace(" ", "")[0] == "1")     # rank 1's bit
+    assert ones / total == expected
+
+
+@pytest.mark.parametrize("ranks", [2, 3, 4])
+def test_expose_fans_out_to_every_receiver(ranks, tmp_path):
+    """One window serves the whole group, not just its first member."""
+    results = run_app(FAN_OUT, ranks, tmp_path)
+    observed = {key.replace(" ", ""): value for key, value in results.items()}
+    assert observed == {"1" * ranks: SHOTS}, results
+
+
+def test_exposed_control_comes_back_untouched(tmp_path):
+    """The root lends a superposition and gets it back unchanged."""
+    results = run_app(CONTROL_RETURNED, 2, tmp_path)
+    total = sum(results.values())
+    # Rank 0's bit is the rightmost; it must read 0 on every shot.
+    zeros = sum(count for key, count in results.items()
+                if key.replace(" ", "")[-1] == "0")
+    assert zeros == total, results
+
+
 def test_lone_transfer_translation_is_refused():
     """Translating a transfer outside the joint pass must not be guessed at."""
     from netqmpi.runtime.adapters.aer.aer_circuit import AerCircuitAdapter
@@ -180,3 +267,15 @@ def test_lone_transfer_translation_is_refused():
     refuse = AerCircuitAdapter.__dict__["_translate_qsend"]
     with pytest.raises(RuntimeError, match="translate_group"):
         refuse(None, QSend([0], 1, tag="t"))
+
+
+def test_lone_expose_translation_is_refused():
+    """A telegate window cannot be opened from one rank's stream either."""
+    from netqmpi.runtime.adapters.aer.aer_circuit import AerCircuitAdapter
+    from netqmpi.sdk.operations import Expose
+
+    refuse = AerCircuitAdapter.__dict__["_translate_expose"]
+    window = Expose(rank=0, root=0, ranks=[0, 1], tag="t",
+                    comm_slot=0, clbits=[0], data_qubit=0)
+    with pytest.raises(RuntimeError, match="translate_group"):
+        refuse(None, window)
