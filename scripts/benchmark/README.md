@@ -218,8 +218,12 @@ real antes de matar el proceso.
 
 # Resultados
 
-> **Estos números son los de la rama `fix-aer-backend`**, con los tres
-> defectos del adaptador de Aer descritos en §1 ya corregidos. La medición
+> **Estos números son los de la rama `fix-aer-backend`**, con los defectos
+> del adaptador de Aer descritos en §1 ya corregidos. Se tomaron antes del
+> arreglo del *layout* de registros (§1, punto 3), que no los afecta: las
+> sondas de este banco crean circuitos de la misma anchura en todos los
+> ranks, que es el caso en que el código antiguo y el nuevo colocan las
+> rodajas igual. La medición
 > previa, con el adaptador tal y como estaba, se conserva en la rama
 > `benchmark-multibackend`; las diferencias se señalan abajo.
 
@@ -255,7 +259,7 @@ Backend por backend:
 - **CUNQA** — ejecuta las cuatro sondas con F = 1.0000. Es el único que
   implementa `expose`/`unexpose`, y por tanto el único donde se puede
   comparar telegate contra teledata.
-- **Aer** — tenía tres defectos, **los tres corregidos en esta rama**:
+- **Aer** — tenía cuatro defectos, **los cuatro corregidos en esta rama**:
   1. *Resultados silenciosamente incorrectos.* El adaptador traducía **rank
      por rank** en orden de rank, y como Aer ejecuta todos los ranks dentro
      de un único `QuantumCircuit`, el orden de emisión *es* el orden de
@@ -280,7 +284,21 @@ Backend por backend:
      ranura *scratch* con el mismo índice en ambos lados para sortear el
      fallo antiguo; **ese rodeo ya no hace falta**, pero se conserva para
      que las cifras sigan siendo comparables con la medición previa.
-  3. *`transfer_mode="teleport"` documentado pero inexistente.* Se ha
+  3. *Las rodajas de los ranks se solapaban cuando no medían lo mismo.* El
+     circuito global se dimensionaba con la anchura del **primer** rank que
+     llamaba a `create_circuit`, pero el desplazamiento de cada rank se
+     calculaba con **su propia** anchura. Mientras todos los ranks pedían el
+     mismo número de qubits nadie lo notaba; en cuanto no (un root de
+     `qscatter` tiene un qubit por receptor y los receptores uno cada uno),
+     las rodajas se pisaban. `3_scatter` devolvía la respuesta equivocada y
+     `4_gather` reventaba con `duplicate qubit arguments`.
+
+     El circuito global se construye ahora **al terminar el trazado**, no
+     durante él: en ese momento se conocen todas las anchuras y las rodajas
+     se colocan grupo a grupo y, dentro de cada grupo, en orden de rank — lo
+     que además hace determinista el orden de bits del histograma, que antes
+     dependía de qué hilo llegase primero.
+  4. *`transfer_mode="teleport"` documentado pero inexistente.* Se ha
      corregido la **documentación**, no añadido el modo: sobre un simulador
      sin ruido un circuito de teleportación devuelve exactamente lo mismo
      que el SWAP, solo que con más puertas y dos ancillas por transferencia.

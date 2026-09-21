@@ -163,6 +163,12 @@ class AerCommunicator(QMPICommunicator):
                 "Every rank must create the same number of circuits so that "
                 f"they can be paired into distributed programs, got {per_rank}.")
 
-        for index in range(counts.pop() if counts else 0):
-            translate_group({rank: communicators[rank].circuits[index]
-                             for rank in ranks})
+        groups = [[communicators[rank].circuits[index] for rank in ranks]
+                  for index in range(counts.pop() if counts else 0)]
+
+        # The global circuit can only be laid out now: the widths the ranks
+        # asked for are all known, and they need not be the same.
+        self._executor.lay_out(groups)
+
+        for group in groups:
+            translate_group(dict(zip(ranks, group)))

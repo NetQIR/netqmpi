@@ -35,9 +35,12 @@ class AerCircuitAdapter(Circuit):
     register.  All translate methods map local indices to global indices
     before appending gates.
 
-    For qsend, the destination offset within the same circuit group is
-    computed as ``group_base + dest_rank * num_qubits``, which remains
-    valid regardless of how many circuit groups exist.
+    A rank's slice is not sized or placed until every rank has finished
+    tracing: the ranks may ask for registers of different widths — a
+    ``qscatter`` root holds one qubit per receiver while the receivers hold
+    one each — so where a slice starts cannot be known from the rank index
+    alone. :meth:`assign_slice` fills the offsets in once the layout is
+    settled.
     """
 
     def __init__(
@@ -45,10 +48,6 @@ class AerCircuitAdapter(Circuit):
         num_qubits: int,
         num_clbits: int,
         comm: "AerCommunicator",
-        global_circuit: "QuantumCircuit",
-        qubit_offset: int,
-        clbit_offset: int,
-        group_base: int,
     ) -> None:
         """
         Initialize the AerCircuitAdapter.
@@ -57,18 +56,30 @@ class AerCircuitAdapter(Circuit):
             num_qubits: Number of qubits for this rank's circuit slice.
             num_clbits: Number of classical bits for this rank's circuit slice.
             comm: Communicator owning this rank.
-            global_circuit: Shared QuantumCircuit for all ranks.
-            qubit_offset: Global qubit index where this rank's slice starts.
-            clbit_offset: Global clbit index where this rank's slice starts.
-            group_base: Global qubit index where this circuit group starts
-                (used to compute qsend destination offsets).
         """
         super().__init__(num_qubits, num_clbits, comm)
+        self._global_circuit: Optional["QuantumCircuit"] = None
+        self._offset = 0
+        self._clbit_offset = 0
+        self._config = comm._config
+
+    def assign_slice(self, global_circuit: "QuantumCircuit",
+                     qubit_offset: int, clbit_offset: int) -> None:
+        """
+        Place this rank's slice in the global circuit.
+
+        Called once every rank has finished tracing, so that the widths each
+        of them asked for are all known and the slices can be laid out
+        without overlapping.
+
+        Args:
+            global_circuit: The circuit shared by every rank.
+            qubit_offset: Global index where this rank's qubits start.
+            clbit_offset: Global index where this rank's classical bits start.
+        """
         self._global_circuit = global_circuit
         self._offset = qubit_offset
         self._clbit_offset = clbit_offset
-        self._group_base = group_base
-        self._config = comm._config
 
     # ------------------------------------------------------------------
     # Translation methods
@@ -231,6 +242,11 @@ class AerCircuitAdapter(Circuit):
     def qubit_offset(self) -> int:
         """Global index where this rank's slice of the register starts."""
         return self._offset
+
+    @property
+    def clbit_offset(self) -> int:
+        """Global index where this rank's classical bits start."""
+        return self._clbit_offset
 
     def emit_transfer(self, op: QSend, source: int, target: int) -> None:
         """
