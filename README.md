@@ -18,12 +18,18 @@ Crucially, NetQMPI is now **backend-agnostic**: the same, unmodified application
 runs on several execution engines (a quantum-network simulator, an HPC emulator,
 a circuit simulator, …) simply by selecting a backend on the command line.
 
-📖 **[Full documentation](https://netqir.github.io/net-qmpi/)** — installation,
+📖 **[Full documentation](https://netqir.github.io/netqmpi/)** — installation,
 programming model, communication primitives, per-backend guides and the complete
 API reference.
 
+## Contributors
+
+- [Francisco Javier Cardama Santiago](https://citius.gal/team/francisco-javier-cardama-santiago/)
+- [Jorge Vázquez Pérez](https://citius.gal/team/jorge-vazquez-perez/)
+
 ## Table of Contents
 
+- [Contributors](#contributors)
 - [Architecture: a decoupled design](#architecture-a-decoupled-design)
 - [Available backends](#available-backends)
 - [Installation](#installation)
