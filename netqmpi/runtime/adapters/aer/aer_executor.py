@@ -10,6 +10,16 @@ from __future__ import annotations
 import threading
 from typing import Any, List, Tuple
 
+# Imported at module scope, not lazily inside the methods that use them.
+# This package is only ever imported once a run has chosen the Aer backend
+# (the CLI defers it to its ``--aer`` branch), so there is nothing to gain
+# by deferring further — and deferring actively misleads: importing Qiskit
+# takes the best part of a second, and paying for it inside
+# ``create_circuit`` charged it to the user's trace, where a profiler reads
+# it as the cost of building the circuit rather than of loading a library.
+from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister  # type: ignore[import-not-found]
+from qiskit_aer import AerSimulator  # type: ignore[import-not-found]
+
 from netqmpi.runtime.executor import Executor
 from netqmpi.sdk.environment import Environment
 from netqmpi.runtime.adapters.aer.aer_circuit import AerCircuitAdapter
@@ -22,11 +32,10 @@ class AerExecutorAdapter(Executor):
     """
     Executor adapter that runs NetQMPI apps on Qiskit's AerSimulator.
 
-    Owns a single global QuantumCircuit that grows with every
-    :meth:`create_circuit` call.  Each call allocates a new contiguous
-    *circuit group* of ``size * num_qubits`` qubits (one slice per rank),
-    so any number of circuits can be created per rank while the SWAP-based
-    qsend offsets remain consistent.
+    Owns the single global QuantumCircuit every rank writes into. It is
+    built by :meth:`lay_out` once the ranks have finished tracing, because
+    only then are the widths they each asked for known; a rank's slice is
+    sized to its own request rather than to a width assumed common to all.
 
     :meth:`run` launches every rank in a separate thread.
     :meth:`build_apps` installs a :class:`threading.Barrier` on
@@ -48,8 +57,6 @@ class AerExecutorAdapter(Executor):
         # Re-narrow the type so the checker knows we have AerSimulatorConfig.
         self._config: AerSimulatorConfig = _config
         self._global_circuit = None
-        # Each entry: (num_qubits, num_clbits, qubit_base, clbit_base)
-        self._circuit_groups: List[Tuple[int, int, int, int]] = []
         self._qubit_count: int = 0
         self._clbit_count: int = 0
         # Protects global-circuit mutations when ranks call create_circuit concurrently.
@@ -62,12 +69,16 @@ class AerExecutorAdapter(Executor):
         comm: AerCommunicator,
     ) -> AerCircuitAdapter:
         """
-        Create an AerCircuitAdapter and extend the global circuit if needed.
+        Create an AerCircuitAdapter for one rank.
 
-        Thread-safe: multiple ranks may call this simultaneously.  The
-        first rank to request a given circuit group allocates
-        ``size * num_qubits`` new qubits for that group; subsequent ranks
-        reuse the already-allocated group.
+        No space is reserved here. The ranks may ask for registers of
+        different widths — a ``qscatter`` root holds one qubit per receiver
+        while each receiver holds one — so a rank's slice cannot be placed
+        from its rank index and its own width alone; doing that overlapped
+        the slices and silently corrupted the program. :meth:`lay_out`
+        places them all once every rank has finished tracing.
+
+        Thread-safe: multiple ranks may call this simultaneously.
 
         Args:
             num_qubits: Number of qubits for this rank's circuit slice.
@@ -75,39 +86,42 @@ class AerExecutorAdapter(Executor):
             comm: Communicator associated with this rank.
 
         Returns:
-            An :class:`AerCircuitAdapter` writing into the global circuit at
-            the correct qubit/clbit offset for this rank and circuit group.
+            An :class:`AerCircuitAdapter` whose slice is placed later.
+        """
+        return AerCircuitAdapter(num_qubits, num_clbits, comm)
+
+    def lay_out(self, groups: List[List[AerCircuitAdapter]]) -> None:
+        """
+        Build the global circuit and give every rank its slice.
+
+        Slices are laid out group by group and, within a group, in rank
+        order, so the bit layout of the resulting histogram is deterministic
+        and independent of the order in which the rank threads happened to
+        reach :meth:`create_circuit`.
+
+        Args:
+            groups: The circuits of each distributed program, rank-ordered
+                within each group.
         """
         with self._lock:
-            if self._global_circuit is None:
-                from qiskit import QuantumCircuit  # type: ignore[import-not-found]
-                self._global_circuit = QuantumCircuit(0, 0)
+            self._global_circuit = QuantumCircuit(0, 0)
+            self._qubit_count = 0
+            self._clbit_count = 0
 
-            # len(comm.circuits) is the index of the circuit being created:
-            # Environment.create_circuit() appends AFTER this method returns.
-            circuit_index = len(comm.circuits)
-
-            if circuit_index >= len(self._circuit_groups):
-                # First rank for this group: allocate slots for all ranks.
-                from qiskit import QuantumRegister, ClassicalRegister  # type: ignore[import-not-found]
-                qr = QuantumRegister(self._size * num_qubits, f'qr{circuit_index}')
-                cr = ClassicalRegister(self._size * num_clbits, f'cr{circuit_index}')
-                self._global_circuit.add_register(qr)
-                self._global_circuit.add_register(cr)
-                self._circuit_groups.append(
-                    (num_qubits, num_clbits, self._qubit_count, self._clbit_count)
-                )
-                self._qubit_count += self._size * num_qubits
-                self._clbit_count += self._size * num_clbits
-
-            _, _, qubit_base, clbit_base = self._circuit_groups[circuit_index]
-            qubit_offset = qubit_base + comm._rank * num_qubits
-            clbit_offset = clbit_base + comm._rank * num_clbits
-
-            return AerCircuitAdapter(
-                num_qubits, num_clbits, comm,
-                self._global_circuit, qubit_offset, clbit_offset, qubit_base,
-            )
+            for index, group in enumerate(groups):
+                for rank, adapter in enumerate(group):
+                    if adapter.num_qubits:
+                        self._global_circuit.add_register(
+                            QuantumRegister(adapter.num_qubits,
+                                            f"q{index}_r{rank}"))
+                    if adapter.num_clbits:
+                        self._global_circuit.add_register(
+                            ClassicalRegister(adapter.num_clbits,
+                                              f"c{index}_r{rank}"))
+                    adapter.assign_slice(self._global_circuit,
+                                         self._qubit_count, self._clbit_count)
+                    self._qubit_count += adapter.num_qubits
+                    self._clbit_count += adapter.num_clbits
 
     def build_apps(self, file: str, size: int) -> List[Any]:
         """
@@ -146,12 +160,26 @@ class AerExecutorAdapter(Executor):
 
         Args:
             apps: List of callables returned by :meth:`build_apps`.
+
+        Raises:
+            Exception: Whatever the designated thread raised while
+                translating or simulating, re-raised here once every rank
+                has been released.
         """
+        AerCommunicator._error = None
+
         threads = [threading.Thread(target=app) for app in apps]
         for t in threads:
             t.start()
         for t in threads:
             t.join()
+
+        # A failure inside the designated thread is captured there rather
+        # than raised, so that every rank still clears the barrier; this is
+        # where it becomes the caller's problem.
+        error, AerCommunicator._error = AerCommunicator._error, None
+        if error is not None:
+            raise error
 
     # ------------------------------------------------------------------
     # Internal helpers called by AerCommunicator.__exit__
@@ -164,8 +192,6 @@ class AerExecutorAdapter(Executor):
         Called by the designated thread inside ``AerCommunicator.__exit__``
         after all ranks have finished building their circuits.
         """
-        from qiskit_aer import AerSimulator  # type: ignore[import-not-found]
-
         run_kwargs: dict = {"shots": self._config.shots}
         if self._config.seed_simulator is not None:
             run_kwargs["seed_simulator"] = self._config.seed_simulator
@@ -185,6 +211,5 @@ class AerExecutorAdapter(Executor):
         after all ranks have received their results.
         """
         self._global_circuit = None
-        self._circuit_groups = []
         self._qubit_count = 0
         self._clbit_count = 0
