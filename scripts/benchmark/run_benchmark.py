@@ -172,11 +172,6 @@ def _run_once(backend: str, app_path: str, ranks: int, args,
             profiler.times["setup"] = time.perf_counter() - setup_start
 
             profiler.install()
-            if envs:
-                # Everything the backend does happens inside the
-                # communicator's __exit__; timing it is what separates the
-                # trace from the barrier waits of a threaded backend.
-                profiler.hook_communicator(type(envs[0].comm))
             try:
                 run_start = time.perf_counter()
                 executor.run([profiler.wrap_app(app) for app in apps]

@@ -22,6 +22,7 @@ from netqasm.runtime.application import (
 )
 from netqasm.runtime.process_logs import create_app_instr_logs, make_last_log
 from netqasm.runtime.settings import Formalism, Simulator, set_simulator
+from netqasm.util.yaml import load_yaml
 
 if TYPE_CHECKING:
     from netqmpi.runtime.adapters.netqasm.netqasm_executor import NetQASMRunConfig
@@ -43,6 +44,9 @@ class NetQASMCommunicator(QMPICommunicator):
     """
     
     netqasm_circuits = []
+    #: Every rank's communicator for the current run, so the state that a
+    #: single simulated round leaves behind can be cleared before the next.
+    communicators: List["NetQASMCommunicator"] = []
 
     def __init__(self, rank: int, size: int, config: NetQASMRunConfig) -> None:
         """
@@ -79,6 +83,7 @@ class NetQASMCommunicator(QMPICommunicator):
         self._connection = None
         
         self._config = config
+        NetQASMCommunicator.communicators.append(self)
 
     # ------------------------------------------------------------------
     # Context manager
@@ -126,22 +131,53 @@ class NetQASMCommunicator(QMPICommunicator):
             The result of the underlying connection ``__exit__`` method.
         """
         
-        argv_per_rank: dict = {}
+        # SquidASM looks up program_inputs[party] for every program it runs
+        # and then writes the AppConfig back into that mapping, so each party
+        # needs an entry, and its own mutable one. An empty mapping made
+        # run_app raise KeyError before any program started.
+        argv = load_yaml(self._config.argv) if self._config.argv else {}
+        argv_per_rank: dict = {
+            self.get_rank_name(r): dict(argv.get(self.get_rank_name(r), {}))
+            for r in range(self.size)
+        }
         
         for circuit in self.circuits:
-            def entry(app_config=None):
+            # Translate before the simulator is anywhere near: the emitted
+            # operations are closures that only touch qubits when they run,
+            # so nothing here needs a connection. Doing it inside the
+            # simulation instead meant an unsupported gate raised in a
+            # program thread, and the run hung waiting for a thread that had
+            # already died rather than reporting the gate.
+            circuit.translate(circuit.ops)
+
+            # ``circuit`` is bound as a default argument: without it every
+            # program built by this loop would close over the last circuit
+            # of the rank rather than its own.
+            def entry(app_config=None, circuit=circuit):
                 self._connection = NetQASMConnection(
                     app_name=app_config.app_name,
                     log_config=app_config.log_config, # TODO: Change none
                     epr_sockets=self._epr_sockets_list,
                 )
                 self._connection.__enter__()
-                for op in circuit.translate(circuit.ops):
-                    result = op()
-                    if result is not None:
+
+                # One bit string per shot, unmeasured bits reading 0, most
+                # significant first — the shape every other backend returns.
+                # Counting each measurement on its own instead made a rank
+                # with two classical bits report twice as many single-bit
+                # outcomes as it ran shots, which no other backend does and
+                # nothing downstream could compare against.
+                shot = [0] * circuit.num_clbits
+                for op in circuit.translated_ops:
+                    outcome = op()
+                    if outcome is not None:
+                        cbit, result = outcome
                         self.flush()
-                        str_result = str(result)
-                        self.results[str_result] = self.results.get(str_result, 0) + 1
+                        shot[cbit] = int(result)
+
+                key = "".join(str(bit) for bit in reversed(shot))
+                self.results[key] = self.results.get(key, 0) + 1
+
                 self._connection.__exit__(exc_type, exc_val, exc_tb)
 
             NetQASMCommunicator.netqasm_circuits.append(
@@ -173,24 +209,70 @@ class NetQASMCommunicator(QMPICommunicator):
             if network_config is not None:
                 network_config = network_cfg_from_path(".", network_config)
 
-            simulate_application(
-                app_instance=app_instance,
-                num_rounds=1,
-                network_cfg=network_config,
-                formalism=formalism,
-                post_function=self._config.post_function,
-                log_cfg=log_cfg,
-                use_app_config=True,
-                enable_logging=self._config.enable_logging,
-                hardware=self._config.hardware,
-            )
+            # One simulation per shot. ``num_rounds`` looks like the natural
+            # place to ask for repeats, but the sockets are built once per
+            # network and a second round finds them closed ("Socket is not
+            # connected so cannot send"); running the whole simulation again,
+            # on a network built afresh, is what actually repeats the
+            # experiment. Before this, num_rounds was pinned at 1 and every
+            # run returned a single sample whatever --shots asked for, so a
+            # 50/50 outcome came back as a certainty. Results accumulate.
+            for _ in range(max(1, self._config.shots)):
+                for comm in NetQASMCommunicator.communicators:
+                    comm._reset_round()
+
+                simulate_application(
+                    app_instance=app_instance,
+                    num_rounds=1,
+                    network_cfg=network_config,
+                    formalism=formalism,
+                    post_function=self._config.post_function,
+                    log_cfg=log_cfg,
+                    use_app_config=True,
+                    enable_logging=self._config.enable_logging,
+                    hardware=self._config.hardware,
+                )
 
             if self._config.enable_logging and log_cfg is not None:
                 create_app_instr_logs(log_cfg.log_subroutines_dir)
                 make_last_log(log_cfg.log_subroutines_dir)
-                    
+
+            # Class-level state belongs to one run. Leaving it behind meant a
+            # second run in the same process assembled an application out of
+            # both runs' programs, so the ranks never matched their own
+            # count and the simulation was never reached.
+            NetQASMCommunicator.reset_run()
+
         return None
 
+    @classmethod
+    def reset_run(cls) -> None:
+        """Forget the programs and communicators of a finished run."""
+        cls.netqasm_circuits = []
+        cls.communicators = []
+
+
+    def _reset_round(self) -> None:
+        """
+        Drop everything a finished simulation round left behind.
+
+        Each round runs on a freshly built network, so the classical and EPR
+        sockets of the previous one no longer refer to anything, and each
+        circuit has to emit its operations again against new qubits.
+        """
+        self._sockets = {self.get_rank_name(i): {} for i in range(self.size)}
+
+        self._epr_sockets = {self.get_rank_name(i): {} for i in range(self.size)}
+        for other in range(self.size):
+            if other != self.rank:
+                self._epr_sockets[self.get_rank_name(self.rank)][
+                    self.get_rank_name(other)
+                ] = EPRSocket(self.get_rank_name(other))
+        self._epr_sockets_list = list(
+            self._epr_sockets[self.get_rank_name(self.rank)].values())
+
+        for circuit in self.circuits:
+            circuit.reset_round()
 
     def get_socket(self, my_rank: int, other_rank: int) -> Socket:
         """

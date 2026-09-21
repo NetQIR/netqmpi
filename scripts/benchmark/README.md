@@ -237,10 +237,10 @@ memoria por configuración; **324 registros** en
 
 | app | aer | cunqa | qoala | netqasm |
 |---|---|---|---|---|
-| `cascade` | OK | OK | OK | error |
-| `ghz` | OK | OK | n/i | – |
-| `qft` | OK | OK | n/i | – |
-| `qft_telegate` | OK | OK | n/i | – |
+| `cascade` | OK | OK | OK | OK |
+| `ghz` | OK | OK | n/i | OK |
+| `qft` | OK | OK | n/i | n/i |
+| `qft_telegate` | OK | OK | n/i | n/i |
 
 `OK` = eco exacto en **todas** las configuraciones probadas. `n/i` = el
 adaptador lanza `NotImplementedError`. `WRONG` = terminó pero devolvió la
@@ -248,12 +248,11 @@ respuesta equivocada en un backend **sin modelo de ruido**, donde cualquier
 cosa por debajo de un eco perfecto es un fallo de traducción, no
 decoherencia.
 
-**Aer ejecuta ahora las cuatro sondas**, telegate incluida: esta rama le
-añade `expose`/`unexpose` además de corregir los fallos de §1. Aer y CUNQA
-son por tanto los dos backends donde se puede comparar telegate contra
-teledata sobre el mismo programa. Qoala y NetQASM siguen sin `expose`, así
-que el primitivo común a los cuatro adaptadores sigue siendo `qsend`/`qrecv`.
-Backend por backend:
+**Los cuatro backends ejecutan ya la misma sonda teledata** (`cascade`), que
+es el mínimo que hacía falta para que «un código, varios backends» signifique
+algo medible. Aer y CUNQA ejecutan las cuatro, así que son donde se puede
+comparar telegate contra teledata sobre el mismo programa; NetQASM ejecuta
+las dos teledata; Qoala sigue limitada a una. Backend por backend:
 
 - **CUNQA** — ejecuta las cuatro sondas con F = 1.0000. Es el único que
   implementa `expose`/`unexpose`, y por tanto el único donde se puede
@@ -348,14 +347,53 @@ Backend por backend:
   `"RX"`/`"RZ"` ([`qoala_circuit.py:313`](../../netqmpi/runtime/adapters/qoala/qoala_circuit.py#L313)),
   así que la única puerta de dos qubits que se puede usar hoy es la que
   nadie escribe a mano.
-- **NetQASM/SquidASM** — **no arranca**. `program_inputs` se construye vacío
-  en [`netqasm_communicator.py:129`](../../netqmpi/runtime/adapters/netqasm/netqasm_communicator.py#L129)
-  y SquidASM hace `program_inputs[party]` para cada programa, así que
-  `KeyError: 'rank_0'` para cualquier app. Parcheando esa línea, la
-  ejecución avanza pero cae en `QubitNotActiveError: Qubit 3 is not active`,
-  un segundo fallo más profundo en la gestión de qubits del adaptador. En
-  ambos casos el proceso **no termina** tras el error (quedan hilos vivos);
-  por eso el runner lleva watchdog.
+- **NetQASM/SquidASM** — **no arrancaba en absoluto**; esta rama lo pone en
+  marcha. Lo que había detrás del primer error, en orden de aparición:
+  1. *`program_inputs` vacío.* SquidASM hace `program_inputs[party]` para
+     cada programa y luego escribe el `AppConfig` dentro de ese mapa, así
+     que cada parte necesita una entrada **propia y mutable**. Se construía
+     `{}`, de modo que `run_app` lanzaba `KeyError: 'rank_0'` antes de
+     arrancar ningún programa.
+  2. *`translate()` reasignaba el registro entero en cada llamada.* Como
+     `translate` recursa sobre el `OperationContainer` a través de sí mismo,
+     cada operación anidada recibía un registro nuevo y abandonaba aquel
+     contra el que se habían escrito las anteriores.
+  3. *Las correcciones se enviaban sin resolver.* `qsend` metía en el socket
+     los *futures* de las dos medidas de Bell sin hacer `flush()` antes, así
+     que el receptor recibía objetos, no bits.
+  4. *Un qubit enviado quedaba muerto en su ranura.* Medir libera el qubit en
+     NetQASM, pero el SDK promete que tras un `qsend` la ranura sigue siendo
+     un qubit en `|0⟩`; volver a tocarla abortaba la ejecución.
+  5. *`qrecv` retenía tres qubits donde bastaba uno*: metía la mitad EPR ya
+     corregida en un qubit nuevo mediante tres CNOT y dejaba vivos tanto el
+     EPR como el ocupante original de la ranura.
+  6. *`shots` se ignoraba.* `num_rounds` estaba fijado a 1, así que toda
+     ejecución devolvía **una sola muestra** y un resultado 50/50 salía como
+     una certeza.
+  7. *Ninguna puerta controlada había funcionado nunca.* El adaptador leía
+     `op.name` sobre un `ControlledGate`, que no tiene ese atributo, así que
+     `cx` y `cz` lanzaban `AttributeError`. Y `SWAP`, que el SDK registra
+     como `Gate` de dos qubits, estaba en la tabla de puertas controladas —
+     inalcanzable— y además implementado como un único CNOT.
+  8. *Las puertas desconocidas se descartaban en silencio.* Ambas tablas
+     hacían `if nombre in tabla: emitir`, sin `else`: el circuito salía sin
+     la puerta y el histograma parecía razonable.
+
+  Las ranuras se asignan ahora **de forma perezosa** —solo al usarlas—, lo
+  que elimina el qubit de relleno que `qrecv` tenía que liberar y con él una
+  carrera que abortaba aproximadamente una ejecución de cada cuatro. Cada
+  shot es una simulación completa sobre una red construida de nuevo
+  (`num_rounds` no sirve: los sockets se cierran entre rondas), y la
+  traducción ocurre **antes** de arrancar el simulador, de modo que una
+  puerta no soportada se reporta al instante en lugar de matar un hilo de
+  programa y dejar la ejecución esperándolo para siempre.
+
+  Verificado contra un control **nativo** en NetQASM puro, sin NetQMPI
+  (teleportación de dos partes por `simulate_application`), y con sondas
+  deterministas: `|1⟩` teleportado llega como `1` en todos los shots, y el
+  eco en base X de `cascade` da **todo ceros en 2 y 3 ranks**. `ghz` también
+  pasa a ejecutarse (F = 1.0). Siguen sin implementarse la fase controlada
+  —que NetQASM no tiene como instrucción— y `expose`.
 
 ## 2. Cuánto cuesta la abstracción
 
@@ -364,6 +402,7 @@ Backend por backend:
 | aer | 60 | 0.311 s | 0.0132 s | 1.19 ms | **12.69%** |
 | cunqa | 24 | 4.795 s | 4.6838 s | 3.42 ms | **0.07%** |
 | qoala | 3 | 3.137 s | 2.3921 s | 0.16 ms | **0.01%** |
+| netqasm | 4 | 29.416 s | 29.4159 s | 0.32 ms | **0.00%** |
 
 En términos absolutos NetQMPI cuesta **entre 0.16 y 3.4 ms** por ejecución.
 Lo que cambia entre backends no es ese coste, sino contra qué se compara:

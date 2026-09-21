@@ -105,6 +105,23 @@ GROUP_TRANSLATE_PROBES: Dict[str, List[Tuple[str, str]]] = {
     "cunqa": [("netqmpi.runtime.adapters.cunqa.cunqa_circuit", "translate_group")],
 }
 
+#: Communicator class per backend. Everything a backend does happens inside
+#: its ``__exit__``, so timing that is what separates the trace from the
+#: work the backend does on the ranks' behalf. The class is named here
+#: rather than taken from a live environment because the adapters differ in
+#: when they build one: NetQASM creates its ``Environment`` inside the
+#: per-rank callable, so at ``build_apps`` time there is nothing to read it
+#: off, and the hook would silently never be installed.
+COMMUNICATOR_PROBES: Dict[str, Tuple[str, str]] = {
+    "aer": ("netqmpi.runtime.adapters.aer.aer_communicator", "AerCommunicator"),
+    "cunqa": ("netqmpi.runtime.adapters.cunqa.cunqa_communicator",
+              "CunqaCommunicator"),
+    "qoala": ("netqmpi.runtime.adapters.qoala.qoala_communicator",
+              "QoalaCommunicator"),
+    "netqasm": ("netqmpi.runtime.adapters.netqasm.netqasm_communicator",
+                "NetQASMCommunicator"),
+}
+
 #: Backends whose translation is interleaved with execution rather than
 #: happening in a separate pass, so ``translate`` cannot be isolated from
 #: ``backend``. The NetQASM adapter returns callables from ``translate``
@@ -172,6 +189,16 @@ class Profiler:
                 self._depth = 0
 
         self._patch(Circuit, "translate", timed_translate)
+
+        probe = COMMUNICATOR_PROBES.get(self.backend)
+        if probe is not None:
+            module_name, class_name = probe
+            try:
+                module = importlib.import_module(module_name)
+            except ImportError:
+                module = None
+            if module is not None and hasattr(module, class_name):
+                self.hook_communicator(getattr(module, class_name))
 
         for module_name, attr in GROUP_TRANSLATE_PROBES.get(self.backend, []):
             try:
