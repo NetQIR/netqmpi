@@ -238,7 +238,7 @@ memoria por configuración; **324 registros** en
 | app | aer | cunqa | qoala | netqasm |
 |---|---|---|---|---|
 | `cascade` | OK | OK | OK | OK |
-| `ghz` | OK | OK | n/i | OK |
+| `ghz` | OK | OK | error | OK |
 | `qft` | OK | OK | n/i | n/i |
 | `qft_telegate` | OK | OK | n/i | n/i |
 
@@ -341,12 +341,36 @@ las dos teledata; Qoala sigue limitada a una. Backend por backend:
   ahora se reporta con los ranks y el tag implicados. Es el mismo contrato
   que ya aplicaba `check_transfers` en CUNQA.
 
-- **Qoala** — solo `cascade`. Faltan `expose`/`unexpose`, `SWAP` y
-  controlled-P. Además **`cx` y `cz` son inalcanzables**: el SDK emite
-  `ControlledGate(control, Gate('X'))` pero el adaptador compara contra
-  `"RX"`/`"RZ"` ([`qoala_circuit.py:313`](../../netqmpi/runtime/adapters/qoala/qoala_circuit.py#L313)),
-  así que la única puerta de dos qubits que se puede usar hoy es la que
-  nadie escribe a mano.
+- **Qoala** — su tabla de puertas estaba escrita contra nombres que el SDK
+  no emite nunca, y esta rama la corrige:
+  1. *`cx` y `cz` eran inalcanzables.* El adaptador comparaba el nombre de la
+     puerta objetivo contra `"RX"` y `"RZ"`, pero el SDK registra un CNOT
+     como `ControlledGate(Gate('X'))` y un CZ como `ControlledGate(Gate('Z'))`.
+     Las dos puertas que la tabla pretendía soportar lanzaban
+     `NotImplementedError`.
+  2. *`crz(θ)` salía como un CZ.* Un `crz` sí produce un `Gate('RZ')`, así que
+     caía en la rama `"RZ"` y se traducía a `cphase` —que es un
+     controlled-Z— **ignorando el ángulo en silencio**. Ahora se rechaza
+     explicando por qué: NetQASM no tiene una rotación controlada.
+  3. *`SWAP` no llegaba a ninguna tabla.* El SDK lo registra como `Gate` de
+     dos qubits, así que se despachaba por la ruta de una sola puerta y
+     moría como desconocido. Se emite ahora como tres CNOT.
+
+  Verificado en aislamiento, sin comunicación de por medio: CNOT sobre `|1⟩`
+  deja ambos qubits a 1, y un SWAP mueve la excitación al qubit 1.
+
+  Con eso `ghz` deja de fallar por la tabla de puertas — y destapa un fallo
+  **distinto y más profundo** en la generación del programa `.iqoala`. El
+  caso mínimo encontrado es: mover un qubit a una ranura auxiliar con un
+  SWAP, enviarlo y recibirlo de vuelta, y deshacer el SWAP. La ida y vuelta
+  por separado funciona, y los SWAP por separado también; juntos, el
+  programa generado se detiene antes de devolver la medida y `_build_counts`
+  lanza `KeyError` buscando la variable de host que nunca volvió. Queda
+  fijado como `xfail(strict)` en
+  [`test/test_qoala_backend.py`](../../test/test_qoala_backend.py) para que
+  avise en cuanto se arregle. Siguen sin implementarse la fase controlada y
+  `expose`.
+
 - **NetQASM/SquidASM** — **no arrancaba en absoluto**; esta rama lo pone en
   marcha. Lo que había detrás del primer error, en orden de aparición:
   1. *`program_inputs` vacío.* SquidASM hace `program_inputs[party]` para
@@ -367,9 +391,13 @@ las dos teledata; Qoala sigue limitada a una. Backend por backend:
   5. *`qrecv` retenía tres qubits donde bastaba uno*: metía la mitad EPR ya
      corregida en un qubit nuevo mediante tres CNOT y dejaba vivos tanto el
      EPR como el ocupante original de la ranura.
-  6. *`shots` se ignoraba.* `num_rounds` estaba fijado a 1, así que toda
-     ejecución devolvía **una sola muestra** y un resultado 50/50 salía como
-     una certeza.
+  6. *`shots` se ignoraba.* `num_rounds` —que es justamente como SquidASM
+     repite un experimento— estaba fijado a 1, así que toda ejecución
+     devolvía **una sola muestra** y un resultado 50/50 salía como una
+     certeza. Pedir repeticiones de verdad exigía además dejar de cachear
+     los sockets clásicos (el comunicador sobrevive a la red sobre la que se
+     abrieron, y la segunda ronda encontraba el socket cerrado) y empezar
+     cada shot con las ranuras de qubits vacías.
   7. *Ninguna puerta controlada había funcionado nunca.* El adaptador leía
      `op.name` sobre un `ControlledGate`, que no tiene ese atributo, así que
      `cx` y `cz` lanzaban `AttributeError`. Y `SWAP`, que el SDK registra
@@ -381,12 +409,17 @@ las dos teledata; Qoala sigue limitada a una. Backend por backend:
 
   Las ranuras se asignan ahora **de forma perezosa** —solo al usarlas—, lo
   que elimina el qubit de relleno que `qrecv` tenía que liberar y con él una
-  carrera que abortaba aproximadamente una ejecución de cada cuatro. Cada
-  shot es una simulación completa sobre una red construida de nuevo
-  (`num_rounds` no sirve: los sockets se cierran entre rondas), y la
+  carrera que abortaba aproximadamente una ejecución de cada cuatro. La
   traducción ocurre **antes** de arrancar el simulador, de modo que una
   puerta no soportada se reporta al instante en lugar de matar un hilo de
   programa y dejar la ejecución esperándolo para siempre.
+
+  **`NetQASMRunConfig.shots` vale 50, no 1024.** El default genérico está
+  equivocado en dos órdenes de magnitud para este backend: SquidASM simula
+  la red entera una vez por shot, a ~1 s por shot en un programa de dos
+  ranks, así que 1024 shots son **más de un cuarto de hora sin imprimir
+  nada** — indistinguible de un cuelgue. Con `--shots` se sube cuando la
+  estadística importe más que la espera.
 
   Verificado contra un control **nativo** en NetQASM puro, sin NetQMPI
   (teleportación de dos partes por `simulate_application`), y con sondas

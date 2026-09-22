@@ -18,6 +18,8 @@ from netqasm.runtime.app_config import AppConfig
 from netqasm.util.yaml import load_yaml
 from netqasm.runtime.settings import Formalism
 
+from netqmpi.runtime.adapters.netqasm._compat import require_major
+
 from netqmpi.runtime.adapters.netqasm.netqasm_communicator import (
     NetQASMCommunicator,
 )
@@ -39,6 +41,18 @@ class NetQASMRunConfig(RunConfig):
     NetQASM-specific simulation parameters.
 
     Attributes:
+        netqasm_major: Major NetQASM release this run expects, 2 by default.
+            The ``--netqasm1.0`` flag sets it to 1. It selects an
+            environment rather than an adapter: the API this backend uses is
+            the same in both releases, so the value is checked against what
+            is installed and the run stops early if they disagree.
+        shots: Number of times the program is simulated. Overrides the
+            generic default of 1024, which is wrong by two orders of
+            magnitude for this backend: SquidASM simulates the whole network
+            once per shot, at roughly a second each on a two-rank program,
+            so the generic default would take a quarter of an hour and look
+            like a hang. Raise it with ``--shots`` when the statistics
+            matter more than the wait.
         formalism: Quantum state formalism to use in the simulation.
         network_config: Network configuration describing the simulated
             topology. If ``None``, the default topology is used.
@@ -46,6 +60,8 @@ class NetQASMRunConfig(RunConfig):
             instruction logging.
     """
 
+    netqasm_major: int = 2
+    shots: int = 50
     formalism: Formalism = field(default_factory=lambda: Formalism.KET)
     enable_logging: bool = True
     hardware: str = "generic"
@@ -73,10 +89,15 @@ class NetQASMExecutorAdapter(Executor):
 
         Args:
             size: Number of available NetQASM nodes.
-            self._config: NetQASM-specific configuration dictionary.
+            config: NetQASM-specific configuration.
+
+        Raises:
+            RuntimeError: If the installed NetQASM is not the major release
+                the configuration asks for.
         """
-        
-        super().__init__(size, config or NetQASMRunConfig())
+        config = config or NetQASMRunConfig()
+        require_major(config.netqasm_major)
+        super().__init__(size, config)
 
     # ------------------------------------------------------------------
     # Executor interface — circuit factory

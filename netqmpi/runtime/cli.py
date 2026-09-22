@@ -92,7 +92,12 @@ def main():
     parser.add_argument("script", type=str, help="Path to the NetQMPI Python script to be executed")
 
     backend_group = parser.add_mutually_exclusive_group()
-    backend_group.add_argument("--netqasm", action="store_true", help="Use NetQASM backend")
+    backend_group.add_argument(
+        "--netqasm", action="store_true",
+        help="Use the NetQASM/SquidASM backend against NetQASM 2.x")
+    backend_group.add_argument(
+        "--netqasm1.0", dest="netqasm1", action="store_true",
+        help="Use the NetQASM/SquidASM backend against the legacy NetQASM 1.x")
     backend_group.add_argument("--cunqa", action="store_true", help="Use CUNQA backend")
     backend_group.add_argument("--aer", action="store_true", help="Use Qiskit AerSimulator backend")
     backend_group.add_argument("--qoala", action="store_true", help="Use Qoala backend (simulation only)")
@@ -120,10 +125,14 @@ def main():
         parser.error("Number of processes must be at least 1")
 
     try:
-        if args.netqasm:
+        if args.netqasm or args.netqasm1:
             from netqmpi.runtime.adapters.netqasm import NetQASMExecutorAdapter, NetQASMRunConfig
 
             config = _build_config(NetQASMRunConfig, "netqasm", args)
+            # Both flags drive the same adapter: the API it uses is the same
+            # in either release. What they pick is the environment, and the
+            # executor stops the run if the installed NetQASM is not it.
+            config.netqasm_major = 1 if args.netqasm1 else 2
             executor = NetQASMExecutorAdapter(args.num_procs, config=config)
         elif args.cunqa:
             from netqmpi.runtime.adapters.cunqa import CunqaExecutorAdapter, CunqaRunConfig
@@ -146,7 +155,7 @@ def main():
             print("No backend flag; using default (NetQASM)")
             config = _build_config(NetQASMRunConfig, "netqasm", args)
             executor = NetQASMExecutorAdapter(args.num_procs, config=config)
-    except (ValueError, OSError) as error:
+    except (ValueError, OSError, RuntimeError) as error:
         parser.error(str(error))
 
     simulate(

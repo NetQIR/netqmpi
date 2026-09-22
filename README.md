@@ -68,7 +68,8 @@ on any backend by switching a flag** — no changes to application logic.
 
 | Backend | CLI flag | What it targets | Key dependencies |
 |---|---|---|---|
-| **NetQASM / SquidASM** | `--netqasm` | Low-level quantum-network simulation (EPR sockets, NetQASM routines) | [`squidasm`](https://github.com/QuTech-Delft/squidasm), [`netsquid`](https://netsquid.org), `netqasm` **1.x** |
+| **NetQASM / SquidASM** | `--netqasm` | Low-level quantum-network simulation (EPR sockets, NetQASM routines) | [`squidasm`](https://github.com/QuTech-Delft/squidasm), [`netsquid`](https://netsquid.org), `netqasm` **2.x**, Python ≥ 3.9 |
+| **NetQASM / SquidASM (legacy)** | `--netqasm1.0` | The same backend against the older NetQASM release | `squidasm`, `netsquid`, `netqasm` **1.x** |
 | **CUNQA** | `--cunqa` | HPC emulation of DQC through virtual QPUs (vQPUs) | [`cunqa`](https://github.com/CESGA-Quantum-Spain/cunqa) (HPC / Slurm environment) |
 | **Qiskit Aer** | `--aer` | Shot-based circuit simulation (swap- or teleportation-based transfer) | `qiskit`, `qiskit-aer` |
 | **Qoala** | `--qoala` | Quantum-internet **node execution environment** with task scheduling & multitasking — **simulation only** | [`qoala`](https://github.com/QuTech-Delft/qoala-sim), [`netsquid`](https://netsquid.org), `netqasm` **2.x**, Python 3.10–3.12 |
@@ -78,10 +79,30 @@ on any backend by switching a flag** — no changes to application logic.
 > installed from its private index:
 > `pip install netsquid --extra-index-url https://<user>:<pwd>@pypi.netsquid.org`.
 >
-> **NetQASM 1.x vs 2.x.** The NetQASM/SquidASM backend uses `netqasm` **1.x**,
-> while Qoala uses `netqasm` **2.x**. These are mutually incompatible, so the
-> `--netqasm` and `--qoala` backends must live in **separate environments**
-> (e.g. two conda envs). CUNQA and Aer have no such constraint.
+> **NetQASM 1.x vs 2.x — and why they still need separate environments.**
+> `--netqasm` targets NetQASM **2.x** and `--netqasm1.0` the older **1.x**.
+> Both drive the *same* adapter: the API this backend uses — `Qubit`,
+> `EPRSocket`, `NetQASMConnection`, `Socket`, the `Application` /
+> `ApplicationInstance` / `Program` trio and SquidASM's
+> `simulate_application` — is unchanged between the two releases, and
+> SquidASM is a pure-Python wheel that accepts either. The flag selects an
+> *environment*, and the run stops immediately, naming both versions, if the
+> one installed is not the one asked for.
+>
+> Two boundaries are real and worth knowing:
+>
+> - **NetQASM 2.x needs Python ≥ 3.9** (it uses PEP 585 generics), so it
+>   cannot be dropped into a 3.8 environment built for 1.x.
+> - **SquidASM and Qoala still cannot share an environment**, but not
+>   because of NetQASM: they require incompatible majors of
+>   `netsquid-magic` (15.x and 14.x respectively). Installing one over the
+>   other leaves the displaced backend unable to build a link layer.
+>
+> The adapter also stays inside the instruction set both NetQASM releases
+> share. 2.x adds more — `Qubit.swap`, for one — but the SquidASM release
+> available here does not execute those, and reaching for one hangs the
+> simulation rather than failing, so a swap is still assembled from three
+> CNOTs. CUNQA and Aer have no such constraints.
 >
 > **Qoala is simulation-only.** It models the software/hardware architecture of a
 > quantum-internet node on NetSquid; it is not a path to real-hardware execution.

@@ -132,7 +132,12 @@ class NetQASMCircuitAdapter(Circuit):
         """
         Exchange two local qubits.
 
-        NetQASM has no SWAP instruction, so it is built from three CNOTs.
+        Three CNOTs, on both NetQASM releases. 2.x does expose
+        ``Qubit.swap``, but it builds an instruction the SquidASM release
+        this backend runs on cannot execute — the simulation simply never
+        finishes — so the hand-assembled version is the portable one. See
+        :mod:`netqmpi.runtime.adapters.netqasm._compat`.
+
         This used to emit a single CNOT, which is a different gate
         altogether and quietly produced the wrong state.
 
