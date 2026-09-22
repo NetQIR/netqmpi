@@ -28,9 +28,9 @@ Pick the backend that matches what you want to do — see
 [Backends](../backends/index.md) for the comparison — and install its
 dependencies.
 
-::::{tab-set}
+:::::{tab-set}
 
-:::{tab-item} CUNQA
+::::{tab-item} CUNQA
 :sync: cunqa
 
 HPC emulation of DQC through virtual QPUs. This is the **reference backend** —
@@ -43,9 +43,9 @@ installed on a laptop.
 
 See the [CUNQA backend page](../backends/cunqa.md) for how to raise vQPUs and
 size them.
-:::
+::::
 
-:::{tab-item} NetQASM / SquidASM
+::::{tab-item} NetQASM / SquidASM
 :sync: netqasm
 
 Low-level quantum-network simulation. NetSquid and SquidASM come from a
@@ -70,9 +70,9 @@ Pin `squidasm>=0.13`. PyPI carries a placeholder package of the same name at
 `0.0.1` with no dependencies, and pip installs that in preference to the real
 one unless a version floor sends it to the private index.
 :::
-:::
+::::
 
-:::{tab-item} Qiskit Aer
+::::{tab-item} Qiskit Aer
 :sync: aer
 
 Shot-based circuit simulation. The lightest option, and the only one with no
@@ -81,9 +81,9 @@ special installation requirements.
 ```bash
 pip install qiskit qiskit-aer
 ```
-:::
+::::
 
-:::{tab-item} Qoala
+::::{tab-item} Qoala
 :sync: qoala
 
 Quantum-internet node execution environment, with task scheduling and
@@ -98,9 +98,9 @@ pip install netqmpi
 ```
 
 Qoala requires Python 3.10–3.12 and `netqasm` **2.x**.
-:::
-
 ::::
+
+:::::
 
 ## Two things that will bite you
 
