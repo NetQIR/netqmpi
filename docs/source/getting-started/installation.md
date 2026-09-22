@@ -33,16 +33,27 @@ dependencies.
 ::::{tab-item} CUNQA
 :sync: cunqa
 
-HPC emulation of DQC through virtual QPUs. This is the **reference backend** —
-the only one implementing every communication primitive.
+HPC emulation of DQC through virtual QPUs. This is the **reference backend**,
+and what the shipped examples are written against.
 
-Install and configure [CUNQA](https://github.com/CESGA-Quantum-Spain/cunqa) on your HPC
-cluster (it provisions vQPUs via the job scheduler), then install `netqmpi` in
-the same environment. CUNQA needs a working SLURM allocation, so it cannot be
-installed on a laptop.
+On a cluster: install and configure
+[CUNQA](https://github.com/CESGA-Quantum-Spain/cunqa) (it provisions vQPUs
+through the job scheduler), then install `netqmpi` in the same environment.
 
-See the [CUNQA backend page](../backends/cunqa.md) for how to raise vQPUs and
-size them.
+On an ordinary computer, use the container — it packs a single-node SLURM,
+CUNQA and NetQMPI together, so your machine stands in for the HPC environment:
+
+```bash
+docker pull jvazquezperez/cunqa_netqmpi
+docker run --rm -it -p 8888:8888 jvazquezperez/cunqa_netqmpi
+```
+
+SLURM and a Jupyter server on port 8888 (token `cunqa`) come up, and you get a
+shell. It runs the real backend, so it also runs out of room like one: expect a
+ceiling of five or six ranks on a single machine.
+
+See the [CUNQA backend page](../backends/cunqa.md) for mounting your own
+checkout, raising vQPUs and sizing them.
 ::::
 
 ::::{tab-item} NetQASM / SquidASM

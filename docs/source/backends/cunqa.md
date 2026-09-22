@@ -8,12 +8,58 @@ netqmpi -n <N> app.py --cunqa [--shots N] [--config cunqa.yaml]
 
 CUNQA emulates distributed quantum computing on HPC infrastructure through
 **virtual QPUs** (vQPUs), provisioned via the job scheduler. It is NetQMPI's
-reference backend: the only one that implements every communication primitive,
-and the one the shipped examples are written against.
+reference backend, and the one the shipped examples are written against.
 
 - **Package:** [`cunqa`](https://github.com/CESGA-Quantum-Spain/cunqa)
-- **Requires:** an HPC environment with SLURM
+- **Requires:** SLURM — a real cluster, or the container below on one machine
 - **Adapter:** {mod}`netqmpi.runtime.adapters.cunqa`
+
+## Trying it on a laptop
+
+CUNQA provisions its vQPUs through SLURM, which normally means a cluster. It
+does not have to: the published image
+[`jvazquezperez/cunqa_netqmpi`](https://hub.docker.com/r/jvazquezperez/cunqa_netqmpi)
+packs a single-node SLURM, CUNQA and NetQMPI together, so an ordinary computer
+can stand in for the HPC environment. Same scheduler, same `qraise`, same
+adapter — one machine instead of a cluster.
+
+```bash
+docker pull jvazquezperez/cunqa_netqmpi
+docker run --rm -it -p 8888:8888 jvazquezperez/cunqa_netqmpi
+```
+
+The container starts SLURM and a Jupyter server on port 8888 (token `cunqa`,
+notebooks under `/home/tutorial`), then drops into a shell.
+
+To run your own checkout rather than the bundled one, mount it and put it first
+on the path — appending matters, since `PYTHONPATH` already carries CUNQA:
+
+```bash
+docker run --rm -v "$PWD":/work -w /work jvazquezperez/cunqa_netqmpi bash -lc '
+    export PYTHONPATH=/work:$PYTHONPATH
+    netqmpi -n 2 --cunqa examples/1_send_recv.py --config cunqa.yaml'
+```
+
+with a config that raises the vQPUs for the run, since none are up in a fresh
+container:
+
+```yaml
+shots: 2048
+cunqa:
+  qraise: true
+  time: "00:10:00"
+  co_located: true
+```
+
+:::{note}
+It is the real backend, so it behaves like the real backend — including where
+it runs out of room. One machine's SLURM stops granting jobs at around **five
+or six ranks** (`RuntimeError: sbatch submission failed`), and the default vQPU
+definition is narrow enough that two data qubits plus a scratch slot plus the
+communication qubits already overflow it (`Not enough data qubits in the QPU
+for the circuit`). Both are properties of the deployment, not of NetQMPI; see
+[Sizing the vQPUs](#sizing-the-vqpus) for the definition file that widens them.
+:::
 
 ## What it supports
 

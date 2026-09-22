@@ -141,11 +141,25 @@ pip install netqmpi
 </details>
 
 <details>
-<summary><b>CUNQA backend (HPC)</b></summary>
+<summary><b>CUNQA backend (HPC, or a container on your own machine)</b></summary>
 
-Install and configure [CUNQA](https://github.com/CESGA-Quantum-Spain/cunqa) on your HPC
-cluster (it provisions vQPUs via the job scheduler), then install `netqmpi` in
-the same environment.
+On a cluster: install and configure
+[CUNQA](https://github.com/CESGA-Quantum-Spain/cunqa) (it provisions vQPUs via
+the job scheduler), then install `netqmpi` in the same environment.
+
+On an ordinary computer, use the container — it packs a single-node SLURM,
+CUNQA and NetQMPI together, so your machine stands in for the HPC environment:
+
+```bash
+docker pull jvazquezperez/cunqa_netqmpi
+docker run --rm -it -p 8888:8888 jvazquezperez/cunqa_netqmpi
+```
+
+SLURM and a Jupyter server on port 8888 (token `cunqa`) come up, and you get a
+shell. It is the real backend, so it also runs out of room like one: a single
+machine tops out around five or six ranks. See the
+[CUNQA backend page](https://netqir.github.io/net-qmpi/backends/cunqa.html) for
+mounting your own checkout and sizing the vQPUs.
 </details>
 
 <details>

@@ -133,10 +133,6 @@ guide/troubleshooting
 :caption: Backends
 
 backends/index
-backends/cunqa
-backends/netqasm
-backends/aer
-backends/qoala
 ```
 
 ```{toctree}
