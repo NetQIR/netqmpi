@@ -19,14 +19,14 @@ set -uo pipefail
 
 BENCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${BENCH_DIR}/../.." && pwd)"
-OUT="${BENCH_DIR}/results/raw.jsonl"
+OUT="${OUT:-${BENCH_DIR}/results/raw.jsonl}"
 RUNNER="scripts/benchmark/run_benchmark.py"
 
 CONDA_ENVS="${CONDA_ENVS:-$HOME/miniconda3/envs}"
 PY_AER="${PY_AER:-$CONDA_ENVS/qiskit-1-3/bin/python}"
 PY_QOALA="${PY_QOALA:-$CONDA_ENVS/qoala/bin/python}"
 PY_NETQASM="${PY_NETQASM:-$CONDA_ENVS/squidasm/bin/python}"
-DOCKER_IMAGE="${DOCKER_IMAGE:-netqmpi:cunqa}"
+DOCKER_IMAGE="${DOCKER_IMAGE:-jvazquezperez/cunqa_netqmpi:latest}"
 
 QUICK=0
 [[ "${1:-}" == "--quick" ]] && QUICK=1
@@ -41,7 +41,7 @@ if (( QUICK )); then
     REPS=1
 else
     RANKS_AER="2 3 4 5 6";  QUBITS_AER="1 2 3"
-    RANKS_CUNQA="2 3 4 5 6 7"; QUBITS_CUNQA="1"
+    RANKS_CUNQA="2 3 4 5"; QUBITS_CUNQA="1 2"
     RANKS_QOALA="2 3 4";    RANKS_NETQASM="2 3"
     REPS=3
 fi
@@ -69,28 +69,73 @@ run_aer() {
 
 # ----------------------------------------------------------------------
 # CUNQA — one container for the whole sweep, since starting it also starts
-# Slurm. Each run raises and drops its own vQPUs so the setup phase measures
-# the real cost of acquiring them.
+# Slurm.
 #
-# The sweep stays at one qubit per rank and grows the rank count instead: the
-# default vQPU definition is narrow, and two data qubits plus the scratch slot
-# plus the communication qubits already overflow it ("Not enough data qubits
-# in the QPU for the circuit"). Widening it needs a vQPU definition file
-# passed as the 'backend' setting, which is a property of the deployment
-# rather than of NetQMPI.
+# The vQPUs are raised *before* the runs and are not part of what is timed.
+# On a cluster they are a reservation made ahead of execution, and how long
+# qraise takes depends on the queue rather than on NetQMPI or CUNQA, so
+# timing it would measure resource availability. Every family holds exactly
+# the n vQPUs of the run: the executor simulates every vQPU of its family in
+# one register, so a larger family would widen the register and change what
+# the backend phase measures.
+#
+# The timing repetitions of one rank count share one family, followed by the
+# usual tracemalloc pass. The executor's own peak memory needs more: it keeps
+# the heap its first circuit grew, so on a family that has already run
+# something its peak says what an earlier configuration needed, not this one.
+# Each configuration therefore also gets one pass on a family raised for it
+# alone, marked --fresh-backend, and only that pass's executor figures are
+# used.
+#
+# The default vQPU definition holds two data qubits and one communication
+# qubit. Probes that reserve a scratch slot (ghz, qft) need q+1 data qubits
+# and so run at q=1 only; cascade and qft_telegate also run at q=2.
+#
+# CUNQA_PARTS selects "timing", "executor" or both (the default).
 # ----------------------------------------------------------------------
+CUNQA_PARTS="${CUNQA_PARTS:-timing executor}"
+
+cunqa_raise() {     # prints the shell lines that raise n vQPUs into $FAM
+    echo "FAM=\$(python3 -c 'from cunqa.qpu import qraise; print(qraise($1, \"01:00:00\", quantum_comm=True, simulator=\"Munich\", co_located=True))' | tail -1)"
+}
+cunqa_drop() {
+    echo "python3 -c \"from cunqa.qpu import qdrop; qdrop('\$FAM')\""
+}
+cunqa_configs() {   # app q pairs the default vQPU definition can hold
+    for app in $APPS; do
+        for q in $QUBITS_CUNQA; do
+            # Two data qubits per vQPU: no room for q=2 plus a scratch slot.
+            if (( q > 1 )) && [[ $app == ghz || $app == qft ]]; then continue; fi
+            echo "$app $q"
+        done
+    done
+}
+
 run_cunqa() {
     command -v docker >/dev/null || { echo "skip cunqa: no docker"; return; }
+    local out="/work/${OUT#"$REPO_ROOT"/}"
     local script="export PYTHONPATH=/work:\$PYTHONPATH; set -u"
-    for app in $APPS; do
-        for n in $RANKS_CUNQA; do
-            for q in $QUBITS_CUNQA; do
+    for n in $RANKS_CUNQA; do
+        if [[ $CUNQA_PARTS == *timing* ]]; then
+            script+=$'\n'"$(cunqa_raise "$n")"
+            while read -r app q; do
                 script+="
 python3 $RUNNER --backend cunqa --app $app --ranks $n --qubits $q \
-    --shots 1024 --reps $REPS --memory --cunqa-qraise \
-    --timeout 300 --out /work/scripts/benchmark/results/raw.jsonl"
-            done
-        done
+    --shots 1024 --reps $REPS --memory --cunqa-family \$FAM \\
+    --timeout 300 --out $out"
+            done < <(cunqa_configs)
+            script+=$'\n'"$(cunqa_drop)"
+        fi
+        if [[ $CUNQA_PARTS == *executor* ]]; then
+            while read -r app q; do
+                script+=$'\n'"$(cunqa_raise "$n")"
+                script+="
+python3 $RUNNER --backend cunqa --app $app --ranks $n --qubits $q \
+    --shots 1024 --reps 0 --memory --fresh-backend --cunqa-family \$FAM \\
+    --timeout 300 --out $out"
+                script+=$'\n'"$(cunqa_drop)"
+            done < <(cunqa_configs)
+        fi
     done
     docker run --rm -v "$REPO_ROOT":/work -w /work "$DOCKER_IMAGE" \
         bash -lc "$script" 2>&1 | grep -Ev '^\[entrypoint\]|^$'

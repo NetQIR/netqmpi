@@ -8,8 +8,10 @@ phases and measures each of them:
 
 ===============  =============================================================
 ``import``       Importing the backend adapter and the simulator it pulls in.
-``setup``        Building the executor and ``build_apps``: resource discovery,
-                 vQPU allocation (CUNQA's ``qraise``), topology construction.
+``setup``        Building the executor and ``build_apps``: resource discovery
+                 and topology construction. CUNQA's vQPUs are raised before
+                 the run, as they would be on a cluster, so ``qraise`` is not
+                 part of it.
 ``trace``        Running the user's ``main()`` so the SDK records operations
                  into the ``OperationContainer``. **NetQMPI SDK cost.**
 ``translate``    ``Circuit.translate``: turning those operations into native
@@ -65,6 +67,7 @@ from __future__ import annotations
 
 import gc
 import importlib
+import os
 import resource
 import time
 import tracemalloc
@@ -402,3 +405,87 @@ class MemoryPass:
             tracemalloc.stop()
             self.peak_bytes = peak
         return None
+
+
+class ExternalPeak:
+    """
+    Peak resident memory of the processes a backend runs outside this one.
+
+    :mod:`tracemalloc` only sees Python allocations of the process it runs
+    in, so it cannot see a simulator that lives in another process, which is
+    where CUNQA does all of its simulation: one ``setup_executor`` per family
+    of vQPUs, plus one ``setup_qpus`` per vQPU. This measures them from the
+    outside instead, through the kernel's per-process high-water mark
+    ``VmHWM``. Writing ``5`` to ``/proc/<pid>/clear_refs`` resets that mark to
+    the current resident size, so :meth:`reset` before a repetition and
+    :meth:`read` after it give the peak of that repetition alone rather than
+    of everything the long-lived family has run so far.
+
+    Args:
+        enabled: When ``False`` the object does nothing and every figure stays
+            ``None``, which is what a backend with no external processes
+            wants.
+        names: Process names (``/proc/<pid>/comm``) to measure, grouped by the
+            role they report under.
+    """
+
+    ROLES = {"executor": ("setup_executor",), "vqpus": ("setup_qpus",)}
+
+    def __init__(self, enabled: bool, names: Optional[Dict[str, tuple]] = None) -> None:
+        self.enabled = enabled
+        self.names = names or self.ROLES
+        self.base: Dict[str, Optional[int]] = {role: None for role in self.names}
+        self.peak: Dict[str, Optional[int]] = {role: None for role in self.names}
+        self.processes: Dict[str, int] = {role: 0 for role in self.names}
+
+    def _pids(self) -> Dict[str, List[int]]:
+        """Return the pids of every measured process, grouped by role."""
+        found: Dict[str, List[int]] = {role: [] for role in self.names}
+        for entry in os.listdir("/proc"):
+            if not entry.isdigit():
+                continue
+            try:
+                with open(f"/proc/{entry}/comm") as handle:
+                    comm = handle.read().strip()
+            except OSError:
+                continue
+            for role, names in self.names.items():
+                if comm in names:
+                    found[role].append(int(entry))
+        return found
+
+    @staticmethod
+    def _status_kib(pid: int, field: str) -> int:
+        """Return one ``kB`` field of ``/proc/<pid>/status``, or 0 if gone."""
+        try:
+            with open(f"/proc/{pid}/status") as handle:
+                for line in handle:
+                    if line.startswith(field + ":"):
+                        return int(line.split()[1])
+        except OSError:
+            pass
+        return 0
+
+    def reset(self) -> None:
+        """Reset the high-water mark of every measured process."""
+        if not self.enabled:
+            return
+        for role, pids in self._pids().items():
+            for pid in pids:
+                try:
+                    with open(f"/proc/{pid}/clear_refs", "w") as handle:
+                        handle.write("5")
+                except OSError as error:
+                    raise RuntimeError(
+                        f"cannot reset the peak RSS of pid {pid} ({error}); "
+                        "the benchmark must run as the user that owns the "
+                        "backend's processes") from error
+            self.base[role] = sum(self._status_kib(pid, "VmRSS") for pid in pids) * 1024
+
+    def read(self) -> None:
+        """Record the peak of every measured process since :meth:`reset`."""
+        if not self.enabled:
+            return
+        for role, pids in self._pids().items():
+            self.processes[role] = len(pids)
+            self.peak[role] = sum(self._status_kib(pid, "VmHWM") for pid in pids) * 1024

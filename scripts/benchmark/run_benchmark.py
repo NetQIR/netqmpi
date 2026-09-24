@@ -41,7 +41,7 @@ for path in (str(BENCH_DIR), str(REPO_ROOT)):
 
 import metrics                                          # noqa: E402
 from profiler import (                                  # noqa: E402
-    INTERLEAVED_BACKENDS, MemoryPass, Profiler, peak_rss_bytes,
+    INTERLEAVED_BACKENDS, ExternalPeak, MemoryPass, Profiler, peak_rss_bytes,
 )
 
 #: Apps live next to this script and are addressed by name.
@@ -161,6 +161,10 @@ def _run_once(backend: str, app_path: str, ranks: int, args,
 
     Environment.__init__ = capture
     profiler = Profiler(backend)
+    # CUNQA simulates in processes of its own, which neither tracemalloc nor
+    # this process's RSS can see; their peak is read from the kernel.
+    external = ExternalPeak(backend == "cunqa")
+    external.reset()
 
     try:
         with MemoryPass(memory) as memory_pass:
@@ -181,6 +185,7 @@ def _run_once(backend: str, app_path: str, ranks: int, args,
                 profiler.uninstall()
     finally:
         Environment.__init__ = original_init
+    external.read()
 
     envs.sort(key=lambda env: env.comm.rank)
     histograms = metrics.per_rank_histograms(envs, backend)
@@ -204,6 +209,10 @@ def _run_once(backend: str, app_path: str, ranks: int, args,
         "shots_observed": sum(sum(h.values()) for h in histograms.values()),
         "rss_peak_bytes": peak_rss_bytes(),
         "py_peak_bytes": memory_pass.peak_bytes,
+        "ext_executor_base_bytes": external.base["executor"],
+        "ext_executor_peak_bytes": external.peak["executor"],
+        "ext_vqpus_peak_bytes": external.peak["vqpus"],
+        "ext_processes": dict(external.processes),
         "translate_isolated": backend not in INTERLEAVED_BACKENDS,
     }
     record.update(metrics.count_operations(envs))
@@ -333,6 +342,10 @@ def main() -> int:
                         help="Let the adapter raise and drop the vQPUs itself")
     parser.add_argument("--cunqa-family", default=None,
                         help="Attach to this already-raised vQPU family")
+    parser.add_argument("--fresh-backend", action="store_true",
+                        help="Mark the records as run on backend processes "
+                             "that had executed nothing before, which is "
+                             "what an external peak-memory figure needs")
     parser.add_argument("--timeout", type=float, default=900.0,
                         help="Wall-clock budget for the whole invocation")
     parser.add_argument("--out", default=None, help="JSONL file to append to")
@@ -358,6 +371,7 @@ def main() -> int:
     for rep, memory in passes:
         record = _base_record(args, rep)
         record["memory_pass"] = memory
+        record["fresh_backend"] = args.fresh_backend
         try:
             record.update(_run_once(args.backend, str(app_path), args.ranks,
                                     args, memory))

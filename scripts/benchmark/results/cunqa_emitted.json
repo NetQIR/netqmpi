@@ -1,0 +1,82 @@
+{
+  "cascade/2": {
+    "send": 1,
+    "gen_ent": 2,
+    "total": 25
+  },
+  "cascade/3": {
+    "send": 2,
+    "gen_ent": 4,
+    "total": 47
+  },
+  "cascade/4": {
+    "send": 3,
+    "gen_ent": 6,
+    "total": 69
+  },
+  "cascade/5": {
+    "send": 4,
+    "gen_ent": 8,
+    "total": 91
+  },
+  "ghz/2": {
+    "send": 4,
+    "gen_ent": 8,
+    "total": 94
+  },
+  "ghz/3": {
+    "send": 8,
+    "gen_ent": 16,
+    "total": 181
+  },
+  "ghz/4": {
+    "send": 12,
+    "gen_ent": 24,
+    "total": 268
+  },
+  "ghz/5": {
+    "send": 16,
+    "gen_ent": 32,
+    "total": 355
+  },
+  "qft/2": {
+    "send": 4,
+    "gen_ent": 8,
+    "total": 96
+  },
+  "qft/3": {
+    "send": 12,
+    "gen_ent": 24,
+    "total": 275
+  },
+  "qft/4": {
+    "send": 24,
+    "gen_ent": 48,
+    "total": 540
+  },
+  "qft/5": {
+    "send": 40,
+    "gen_ent": 80,
+    "total": 891
+  },
+  "qft_telegate/2": {
+    "send": 4,
+    "gen_ent": 4,
+    "total": 52
+  },
+  "qft_telegate/3": {
+    "send": 12,
+    "gen_ent": 10,
+    "total": 129
+  },
+  "qft_telegate/4": {
+    "send": 24,
+    "gen_ent": 18,
+    "total": 234
+  },
+  "qft_telegate/5": {
+    "send": 40,
+    "gen_ent": 28,
+    "total": 367
+  }
+}
