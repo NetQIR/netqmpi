@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='netqmpi',
-    version='0.3.0',
+    version='0.3.1',
     entry_points={
         'console_scripts': [
             'netqmpi=netqmpi.runtime.cli:main', 
