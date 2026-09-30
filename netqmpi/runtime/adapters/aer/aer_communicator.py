@@ -34,8 +34,9 @@ class AerCommunicator(QMPICommunicator):
     3. All threads are released with results available and continue past
        the ``with env.comm:`` block simultaneously.
 
-    The barrier and class-level communicator list are reset after the last
-    rank exits so the adapter is reusable within the same process.
+    The barrier and class-level communicator list are reset by the executor
+    once every rank has finished, whether the run succeeded or not, so the
+    adapter is reusable within the same process.
 
     Args:
         rank: Numeric index of the current rank.
@@ -47,13 +48,12 @@ class AerCommunicator(QMPICommunicator):
     # All AerCommunicator instances for the current run (rank-ordered).
     communicators: List["AerCommunicator"] = []
     # Set by AerExecutorAdapter.build_apps after all communicators are created.
+    # Whichever rank fails first *aborts* it, which wakes every rank waiting
+    # on it with BrokenBarrierError; the executor then re-raises the failure
+    # that caused the abort. Without that, a rank that raised anywhere left
+    # the others waiting on a barrier nobody would ever reach, and the
+    # process hung instead of reporting what went wrong.
     _barrier: Optional[threading.Barrier] = None
-    # Raised by the designated thread, re-raised by the executor once every
-    # rank has been released. Without it a failure there — an unmatched
-    # transfer, an unsupported gate — would leave the other ranks waiting on
-    # a barrier that nobody will ever reach, and the process would hang
-    # instead of reporting what went wrong.
-    _error: Optional[BaseException] = None
 
     def __init__(
         self,
@@ -74,6 +74,9 @@ class AerCommunicator(QMPICommunicator):
         super().__init__(rank, size)
         self._config = config
         self._executor = executor
+        # Whether this rank has reached the barrier, so the executor can tell
+        # a rank that never will from one that is merely slow.
+        self.synchronised = False
         AerCommunicator.communicators.append(self)
 
     def __enter__(self) -> "AerCommunicator":
@@ -103,33 +106,42 @@ class AerCommunicator(QMPICommunicator):
         After this method returns, ``env.comm.results`` is populated for
         every rank.
 
+        If the block raised, or the designated thread fails, the barrier is
+        aborted instead: every other rank is released at once with
+        :class:`threading.BrokenBarrierError`, and the executor reports the
+        failure that started it.
+
         Args:
             exc_type: Exception type, if one was raised.
             exc_val: Exception instance, if one was raised.
             exc_tb: Traceback, if one was raised.
         """
+        barrier = AerCommunicator._barrier
+        self.synchronised = True
+
+        # A rank that failed while tracing has no program to contribute, and
+        # simulating the others without it would only produce a misleading
+        # error about unmatched transfers. Release everybody and let the
+        # original exception propagate.
+        if exc_type is not None:
+            barrier.abort()
+            return None
+
         # Phase 1: wait for every rank to finish building its circuit.
-        party_id = AerCommunicator._barrier.wait()
+        party_id = barrier.wait()
 
         # Phase 2: one thread translates every rank's circuits together and
-        # runs the simulation. Whatever happens it must reach the next
-        # barrier, or the other ranks wait for it forever.
+        # runs the simulation. If that fails the others must not wait for it.
         if party_id == 0:
             try:
                 self._translate_all()
                 self._executor._run_simulation()
-            except BaseException as error:        # noqa: BLE001 - re-raised below
-                AerCommunicator._error = error
+            except BaseException:
+                barrier.abort()
+                raise
 
-        # Phase 3: all threads block until the simulation is done, then
-        # the designated thread resets shared state.
-        AerCommunicator._barrier.wait()
-
-        if party_id == 0:
-            self._executor._reset()
-            AerCommunicator.communicators = []
-            AerCommunicator._barrier = None
-
+        # Phase 3: all threads block until the simulation is done.
+        barrier.wait()
         return None
 
     # ------------------------------------------------------------------

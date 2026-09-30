@@ -115,7 +115,28 @@ class QoalaRunConfig(RunConfig):
             state, in ``[0.25, 1.0]``. ``1.0`` (default) uses perfect links;
             values below 1.0 use a depolarising link with
             ``prob_max_mixed = (4/3)(1 - link_fidelity)``.
-        seed: Optional NetSquid random seed for reproducible runs.
+        seed: Optional NetSquid random seed for reproducible runs. Each
+            simulation of the run is seeded with ``seed + i``, *i* counting
+            simulations, so the shots stay independent.
+        concurrent_shots: How many shots share one NetSquid simulation.
+
+            ``1`` (default) simulates each shot on its own network, which is
+            what a shot means: the program alone on its nodes. Submitting
+            every shot as one batch, as this adapter used to, runs them *at
+            the same time* on nodes whose memory they share. A shot that
+            holds a qubit across a round trip — ``ghz`` holds its control
+            while the tour is away — could then be left waiting for memory
+            another shot held while waiting in turn, until the simulation
+            ran out of events with programs unfinished: the ``KeyError:
+            'm_8'`` of ``ghz``. Sharing the device also stretches every
+            shot's timeline, which with memory noise means more decoherence
+            than the program itself would suffer.
+
+            A larger value trades that for speed — one network built per
+            ``concurrent_shots`` shots instead of per shot — and gives every
+            node ``concurrent_shots`` times the qubits a shot needs, so the
+            shots can no longer starve each other of memory. Timing, and so
+            decoherence, is still shared, so use it for noiseless runs.
     """
 
     num_qubits_per_node: Optional[int] = None
@@ -124,11 +145,16 @@ class QoalaRunConfig(RunConfig):
     hw_config: Optional[QoalaQDeviceConfig] = None
     link_fidelity: float = 1.0
     seed: Optional[int] = None
+    concurrent_shots: int = 1
 
     def __post_init__(self) -> None:
         if not (0.25 <= self.link_fidelity <= 1.0):
             raise ValueError(
                 f"link_fidelity must be in [0.25, 1.0], got {self.link_fidelity}."
+            )
+        if self.concurrent_shots < 1:
+            raise ValueError(
+                f"concurrent_shots must be at least 1, got {self.concurrent_shots}."
             )
 
     @classmethod
@@ -241,7 +267,11 @@ class QoalaExecutorAdapter(Executor):
         self, registry: Dict[int, Tuple[QoalaProgramSpec, QoalaCommunicator]]
     ) -> Dict[int, Dict[str, int]]:
         """
-        Build the Qoala network and run one simulation for all ranks.
+        Run every rank's program for the configured number of shots.
+
+        The shots are split into simulations of at most
+        :attr:`QoalaRunConfig.concurrent_shots` each (see there for why one
+        per simulation is the default), and their results pooled.
 
         Args:
             registry: Mapping ``rank -> (program spec, communicator)`` gathered
@@ -250,10 +280,97 @@ class QoalaExecutorAdapter(Executor):
         Returns:
             Mapping ``rank -> {bitstring: count}`` with the measurement
             histogram for each rank (empty for ranks that measure nothing).
+
+        Raises:
+            RuntimeError: If a rank's program did not finish, which means the
+                simulation deadlocked.
+        """
+        from qoala.lang.parse import QoalaParser
+
+        ranks = sorted(registry.keys())
+        plan = self.plan_simulations(int(self._config.shots),
+                                     self._config.concurrent_shots)
+
+        per_shot = self._config.num_qubits_per_node
+        if per_shot is None:
+            per_shot = max(spec.num_qubits for spec, _ in registry.values())
+        num_qubits = self.qubits_per_node(per_shot, max(plan))
+
+        # Uniform qdevice topology shared by every node (perfect unless a
+        # QoalaQDeviceConfig with noise is supplied).
+        topology = self._build_topology(num_qubits)
+        programs = {r: QoalaParser(registry[r][0].iqoala_text).parse() for r in ranks}
+
+        program_results: Dict[int, List[Any]] = {r: [] for r in ranks}
+        for index, shots in enumerate(plan):
+            seed = None if self._config.seed is None else self._config.seed + index
+            for rank, results in self._simulate(
+                    ranks, registry, programs, topology, shots, seed).items():
+                program_results[rank].extend(results)
+
+        return {
+            r: self._build_counts(program_results[r], registry[r][0].outputs, rank=r)
+            for r in ranks
+        }
+
+    @staticmethod
+    def plan_simulations(shots: int, concurrent_shots: int) -> List[int]:
+        """
+        Split a run's shots into simulations.
+
+        Args:
+            shots: Shots the run asks for (at least one is always run).
+            concurrent_shots: Most shots one simulation may hold.
+
+        Returns:
+            The number of shots of each simulation, in order.
+        """
+        shots = max(1, shots)
+        size = max(1, concurrent_shots)
+        return [min(size, shots - start) for start in range(0, shots, size)]
+
+    @staticmethod
+    def qubits_per_node(per_shot: int, shots: int) -> int:
+        """
+        Size every node for the shots that share it.
+
+        Each shot gets the whole of what it needs, so shots sharing a node
+        cannot block each other on memory.
+
+        Args:
+            per_shot: Qubits one shot needs on a node.
+            shots: Shots simulated at the same time.
+
+        Returns:
+            The physical qubits every node must expose.
+        """
+        return max(per_shot, 1) * max(shots, 1)
+
+    def _simulate(
+        self,
+        ranks: List[int],
+        registry: Dict[int, Tuple[QoalaProgramSpec, QoalaCommunicator]],
+        programs: Dict[int, Any],
+        topology: Any,
+        num_iterations: int,
+        seed: Optional[int],
+    ) -> Dict[int, List[Any]]:
+        """
+        Build the Qoala network and run one simulation of some shots.
+
+        Args:
+            ranks: Every rank, sorted.
+            registry: Mapping ``rank -> (program spec, communicator)``.
+            programs: Parsed program of every rank.
+            topology: Qdevice topology shared by every node.
+            num_iterations: Shots in this simulation.
+            seed: NetSquid seed for this simulation, if any.
+
+        Returns:
+            Mapping ``rank -> [ProgramResult, ...]``, one per shot.
         """
         import netsquid as ns
         from qoala.lang.ehi import UnitModule
-        from qoala.lang.parse import QoalaParser
         from qoala.runtime.config import (
             ClassicalConnectionConfig,
             LatenciesConfig,
@@ -267,20 +384,8 @@ class QoalaExecutorAdapter(Executor):
 
         ns.sim_reset()
         ns.set_qstate_formalism(ns.QFormalism.DM)
-        if self._config.seed is not None:
-            ns.set_random_state(seed=self._config.seed)
-
-        ranks = sorted(registry.keys())
-        num_iterations = max(1, int(self._config.shots))
-
-        num_qubits = self._config.num_qubits_per_node
-        if num_qubits is None:
-            num_qubits = max(spec.num_qubits for spec, _ in registry.values())
-        num_qubits = max(num_qubits, 1)
-
-        # Uniform qdevice topology shared by every node (perfect unless a
-        # QoalaQDeviceConfig with noise is supplied).
-        topology = self._build_topology(num_qubits)
+        if seed is not None:
+            ns.set_random_state(seed=seed)
 
         # One ProcNode per rank; node_id == rank so remote_id templates are trivial.
         nodes = [
@@ -317,7 +422,6 @@ class QoalaExecutorAdapter(Executor):
 
         network = build_network_from_config(network_cfg)
 
-        programs = {r: QoalaParser(registry[r][0].iqoala_text).parse() for r in ranks}
         inputs = {
             r: [ProgramInput(dict(registry[r][0].program_input)) for _ in range(num_iterations)]
             for r in ranks
@@ -343,12 +447,11 @@ class QoalaExecutorAdapter(Executor):
         network.start()
         ns.sim_run()
 
-        results: Dict[int, Dict[str, int]] = {}
-        for r in ranks:
-            procnode = network.nodes[self._rank_name(r)]
-            batch_result = procnode.scheduler.get_batch_results()[0]
-            results[r] = self._build_counts(batch_result.results, registry[r][0].outputs)
-        return results
+        return {
+            r: list(network.nodes[self._rank_name(r)]
+                    .scheduler.get_batch_results()[0].results)
+            for r in ranks
+        }
 
     # ------------------------------------------------------------------
     # Helpers
@@ -446,7 +549,8 @@ class QoalaExecutorAdapter(Executor):
 
     @staticmethod
     def _build_counts(
-        program_results: List[Any], outputs: List[Tuple[int, str]]
+        program_results: List[Any], outputs: List[Tuple[int, str]],
+        rank: Optional[int] = None,
     ) -> Dict[str, int]:
         """
         Aggregate per-iteration program results into a measurement histogram.
@@ -454,16 +558,35 @@ class QoalaExecutorAdapter(Executor):
         Args:
             program_results: One ``ProgramResult`` per simulation iteration.
             outputs: ``(clbit_index, host_var_name)`` pairs returned by the rank.
+            rank: The rank the results belong to, for error reporting.
 
         Returns:
             ``{bitstring: count}`` ordered by ascending classical-bit index; an
             empty dict if the rank returns no measurements.
+
+        Raises:
+            RuntimeError: If a result lacks a returned variable. The program
+                returns them all in its last block, so a missing one means it
+                never got there: ``ns.sim_run()`` returned because nothing was
+                left to simulate, with the program still waiting — a
+                deadlock, which NetSquid does not report on its own. This used
+                to surface as a bare ``KeyError`` on the variable's name.
         """
         if not outputs:
             return {}
         ordered_vars = [var for _, var in sorted(outputs, key=lambda t: t[0])]
         counts: Dict[str, int] = {}
-        for result in program_results:
+        for shot, result in enumerate(program_results):
+            missing = [var for var in ordered_vars if var not in result.values]
+            if missing:
+                who = "a rank" if rank is None else f"rank {rank}"
+                raise RuntimeError(
+                    f"The Qoala simulation ended with {who}'s program "
+                    f"unfinished in shot {shot}: it never returned "
+                    f"{', '.join(missing)}. NetSquid stops when no event is "
+                    f"left, so this is a deadlock, not a result — a program "
+                    f"waiting on a peer that is waiting on it, or on memory "
+                    f"that is never freed.")
             bits = "".join(str(int(result.values[var])) for var in ordered_vars)
             counts[bits] = counts.get(bits, 0) + 1
         return counts

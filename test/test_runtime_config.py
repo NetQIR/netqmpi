@@ -82,7 +82,8 @@ def test_a_backend_config_extends_the_generic_one(aer_config):
         64, "swap", 11)
 
     names = {field.name for field in dataclasses.fields(aer_config)}
-    assert names == {"shots", "transfer_mode", "seed_simulator"}
+    assert names == {"shots", "transfer_mode", "seed_simulator",
+                     "method", "max_parallel_threads"}
 
 
 def test_a_backend_config_rejects_another_backends_key(aer_config):

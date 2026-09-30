@@ -9,7 +9,8 @@ register.
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+from collections import deque
+from typing import Any, Deque, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from qiskit import QuantumCircuit  # type: ignore[import-not-found]
@@ -483,53 +484,6 @@ class AerCircuitAdapter(Circuit):
 BLOCKING = (QSend, QRecv, CollectiveOperation)
 
 
-def _transfer_partners(blocked: Dict[int, Operation]
-                       ) -> Optional[Tuple[str, Tuple[int, QSend], Tuple[int, QRecv]]]:
-    """
-    Find a transfer whose two halves are both waiting.
-
-    Args:
-        blocked: The operation each rank is stopped on, keyed by rank.
-
-    Returns:
-        ``(tag, (source_rank, qsend), (target_rank, qrecv))`` for the first
-        matched transfer, or ``None`` when nothing can be paired.
-    """
-    sends: Dict[str, Tuple[int, QSend]] = {}
-    recvs: Dict[str, Tuple[int, QRecv]] = {}
-    for rank, op in blocked.items():
-        if isinstance(op, QSend):
-            sends[op.tag] = (rank, op)
-        elif isinstance(op, QRecv):
-            recvs[op.tag] = (rank, op)
-
-    for tag in sorted(sends):
-        if tag in recvs:
-            return tag, sends[tag], recvs[tag]
-    return None
-
-
-def _ready_collective(blocked: Dict[int, Operation]
-                      ) -> Optional[CollectiveOperation]:
-    """
-    Find a collective every one of its participants is waiting on.
-
-    Args:
-        blocked: The operation each rank is stopped on, keyed by rank.
-
-    Returns:
-        The first collective whose whole group has arrived, or ``None``.
-    """
-    for rank in sorted(blocked):
-        op = blocked[rank]
-        if not isinstance(op, CollectiveOperation):
-            continue
-        if all(other in blocked and op.matches(blocked[other])
-               for other in op.ranks):
-            return op
-    return None
-
-
 def _open_window(adapters: Dict[int, "AerCircuitAdapter"],
                  blocked: Dict[int, Operation], op: Expose) -> None:
     """
@@ -638,6 +592,14 @@ def translate_group(adapters: Dict[int, "AerCircuitAdapter"]) -> None:
     ``expose`` likewise needs the root's record for the qubit being lent and
     each receiver's for the slot it is lent into.
 
+    The pass is a work queue. Only the ranks a call released are advanced
+    after it is emitted, and the calls still waiting are indexed by tag, so
+    finding the other half of a transfer, or the last participant of a
+    collective, is a lookup rather than a sweep. Re-scanning every rank after
+    every call instead made the pass O(calls * ranks): at 256 ranks a cascade
+    cost four times as much per operation to translate as at 32, for the
+    same work per call.
+
     Args:
         adapters: Circuit adapter of every rank, keyed by rank.
 
@@ -650,44 +612,79 @@ def translate_group(adapters: Dict[int, "AerCircuitAdapter"]) -> None:
     streams = {rank: list(adapters[rank].ops.flatten()) for rank in ranks}
     cursors = {rank: 0 for rank in ranks}
 
-    while True:
-        # Every rank runs ahead on its own until it hits something it
-        # cannot emit without a partner.
-        for rank in ranks:
-            stream = streams[rank]
-            while cursors[rank] < len(stream) and not isinstance(
-                stream[cursors[rank]], BLOCKING
-            ):
-                adapters[rank].translate(stream[cursors[rank]])
-                cursors[rank] += 1
+    # The call each rank is stopped on, keyed by rank.
+    blocked: Dict[int, Operation] = {}
+    # Half-transfers still waiting for their other half, keyed by tag.
+    sends: Dict[str, int] = {}
+    recvs: Dict[str, int] = {}
+    # Participants that have reached each collective so far.
+    arrived: Dict[Tuple[type, str], List[int]] = {}
+    # Calls whose participants have all arrived, in the order they did.
+    ready: Deque[Tuple[str, Any]] = deque()
 
-        blocked = {rank: streams[rank][cursors[rank]]
-                   for rank in ranks if cursors[rank] < len(streams[rank])}
-        if not blocked:
+    def advance(rank: int) -> None:
+        # Run the rank ahead on its own until it reaches something it cannot
+        # emit without a partner, and file that call where the partner will
+        # look for it.
+        stream = streams[rank]
+        cursor = cursors[rank]
+        while cursor < len(stream) and not isinstance(stream[cursor], BLOCKING):
+            adapters[rank].translate(stream[cursor])
+            cursor += 1
+        cursors[rank] = cursor
+        if cursor == len(stream):
             return
 
-        transfer = _transfer_partners(blocked)
-        if transfer is not None:
-            _emit_transfer(adapters, *transfer)
-            cursors[transfer[1][0]] += 1
-            cursors[transfer[2][0]] += 1
-            continue
-
-        collective = _ready_collective(blocked)
-        if collective is None:
-            raise _deadlock_error(blocked, ranks)
-
-        if isinstance(collective, Expose):
-            _open_window(adapters, blocked, collective)
-        elif isinstance(collective, Unexpose):
-            _close_window(adapters, blocked, collective)
+        op = stream[cursor]
+        blocked[rank] = op
+        if isinstance(op, QSend):
+            if op.tag in recvs:
+                ready.append(("transfer", (op.tag, rank, recvs.pop(op.tag))))
+            else:
+                sends[op.tag] = rank
+        elif isinstance(op, QRecv):
+            if op.tag in sends:
+                ready.append(("transfer", (op.tag, sends.pop(op.tag), rank)))
+            else:
+                recvs[op.tag] = rank
         else:
-            raise RuntimeError(
-                f"{type(collective).__name__} is not implemented for the Aer "
-                f"backend.")
+            key = (type(op), op.tag)
+            group = arrived.setdefault(key, [])
+            group.append(rank)
+            if set(group) == set(op.ranks):
+                del arrived[key]
+                ready.append(("collective", op))
 
-        for rank in collective.ranks:
+    for rank in ranks:
+        advance(rank)
+
+    while ready:
+        kind, call = ready.popleft()
+
+        if kind == "transfer":
+            tag, source, target = call
+            _emit_transfer(adapters, tag, (source, blocked[source]),
+                           (target, blocked[target]))
+            released = sorted((source, target))
+        else:
+            if isinstance(call, Expose):
+                _open_window(adapters, blocked, call)
+            elif isinstance(call, Unexpose):
+                _close_window(adapters, blocked, call)
+            else:
+                raise RuntimeError(
+                    f"{type(call).__name__} is not implemented for the Aer "
+                    f"backend.")
+            released = sorted(call.ranks)
+
+        for rank in released:
+            del blocked[rank]
             cursors[rank] += 1
+        for rank in released:
+            advance(rank)
+
+    if blocked:
+        raise _deadlock_error(blocked, ranks)
 
 
 def _emit_transfer(adapters: Dict[int, "AerCircuitAdapter"], tag: str,

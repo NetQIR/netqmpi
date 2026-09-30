@@ -92,7 +92,8 @@ settings and raise the vQPUs yourself with qraise before running.
 | `link_duration` | float | `1000.0` | EPR-pair generation time, in ns |
 | `qnos_instr_time` | float | `1000.0` | Duration of one quantum-processor instruction, in ns |
 | `link_fidelity` | float | `1.0` | EPR-pair fidelity to the ideal Bell state, in `[0.25, 1.0]`. Below 1.0 uses a depolarising link with `prob_max_mixed = (4/3)(1 - link_fidelity)`. |
-| `seed` | int | `None` | NetSquid random seed, for reproducible runs |
+| `seed` | int | `None` | NetSquid random seed, for reproducible runs. Simulation *i* of a run is seeded with `seed + i` |
+| `concurrent_shots` | int | `1` | Shots per NetSquid simulation. Above 1, every node gets that many times the qubits a shot needs; shots then share the device's timeline, so keep it at 1 for noisy runs. See [the Qoala backend](../backends/qoala.md) |
 | `hardware` | mapping | `None` | qdevice noise model; omit for a perfect device |
 
 A `link_fidelity` outside `[0.25, 1.0]` is rejected when the config is built.
@@ -127,15 +128,24 @@ no separate readout-flip model.
 |---|---|---|---|
 | `transfer_mode` | str | `"swap"` | Qubit transfer protocol for `qsend`/`qrecv`. `"swap"` inserts an unphysical SWAP between the source and destination slots — shallower and easier to debug, but not a real network transfer. `"teleport"` is **not yet implemented** and raises. |
 | `seed_simulator` | int | `None` | RNG seed, for reproducible simulations |
+| `method` | str | `"automatic"` | AerSimulator method (`statevector`, `stabilizer`, ...) |
+| `max_parallel_threads` | int | `0` | Threads Aer may use; `0` means all cores |
 
 ## `netqasm` block
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `formalism` | `Formalism` | `Formalism.KET` | Quantum state formalism used by the simulation |
-| `enable_logging` | bool | `true` | Per-rank instruction logging |
-| `hardware` | str | `"generic"` | Hardware model name |
-| `network_config` | Any | `None` | Simulated network topology; default topology when unset |
+| `enable_logging` | bool | `false` | Per-rank instruction logging, each run in its own directory under `./log` |
+| `hardware` | str | `"generic"` | Node hardware, `"generic"` or `"nv"` |
+| `network_config` | str | `None` | Path to a network YAML; when unset the network is built from the keys below |
+| `num_qubits` | int | `5` | Qubits per node. Runs that do not fit are refused before simulating |
+| `t1`, `t2` | float | `0.0` | Qubit amplitude-damping / dephasing time, in ns; 0 disables it |
+| `gate_fidelity` | float | `1.0` | Fidelity of every gate |
+| `link_fidelity` | float | `1.0` | Fidelity of the EPR pairs every link delivers |
+| `link_noise` | str | `"Depolarise"` | Link noise model when `link_fidelity < 1` |
+| `epr_setup_timeout` | float | `60.0` | Wall-clock seconds to wait for a peer's EPR socket (SquidASM hard-codes 5) |
+| `poll_interval` | float | `0.001` | Seconds SquidASM's main thread sleeps between checks on its program threads |
 | `log_cfg` | Any | `None` | NetQASM log configuration |
 | `roles` | str | `"roles.yaml"` | Roles configuration file |
 | `post_function` | callable | `None` | Function invoked after the simulation |

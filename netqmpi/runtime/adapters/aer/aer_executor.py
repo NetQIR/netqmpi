@@ -143,11 +143,43 @@ class AerExecutorAdapter(Executor):
         for rank in range(size):
             comm = AerCommunicator(rank, size, self._config, self)
             env = Environment(comm, self)
-            wrapped_main = lambda env=env: main_func(env=env)
-            apps.append(wrapped_main)
+            apps.append(self._rank_app(main_func, env))
         # Install the barrier after all communicators exist so __exit__ can use it.
         AerCommunicator._barrier = threading.Barrier(size)
         return apps
+
+    @staticmethod
+    def _rank_app(main_func, env: Environment):
+        """
+        Wrap one rank's ``main`` so that the rank cannot strand the others.
+
+        The other ranks wait on a barrier this rank has to reach, so whatever
+        stops it from getting there — an exception anywhere in ``main``, or
+        returning without ever entering the ``with env.comm:`` block — aborts
+        the barrier and releases them before the rank's thread ends.
+
+        Args:
+            main_func: The user's entry point.
+            env: The environment injected into this rank.
+
+        Returns:
+            A zero-argument callable running the rank.
+        """
+        def app():
+            try:
+                main_func(env=env)
+            except BaseException:
+                AerCommunicator._barrier.abort()
+                raise
+            if not env.comm.synchronised:
+                AerCommunicator._barrier.abort()
+                raise RuntimeError(
+                    f"rank {env.comm.rank} returned without entering its "
+                    f"'with env.comm:' block, so the other ranks, which wait "
+                    f"for every rank there, could never run their program.")
+
+        app.rank = env.comm.rank
+        return app
 
     def run(self, apps: List[Any]) -> None:
         """
@@ -162,24 +194,45 @@ class AerExecutorAdapter(Executor):
             apps: List of callables returned by :meth:`build_apps`.
 
         Raises:
-            Exception: Whatever the designated thread raised while
-                translating or simulating, re-raised here once every rank
-                has been released.
+            Exception: The first failure of any rank — raised in its
+                ``main``, or by the designated thread while translating or
+                simulating — once every rank has been released. The
+                :class:`threading.BrokenBarrierError` the other ranks see
+                when that failure aborts the barrier is only a consequence of
+                it, and is raised on its own only if nothing else failed.
         """
-        AerCommunicator._error = None
+        errors: List[Tuple[int, BaseException]] = []
+        lock = threading.Lock()
 
-        threads = [threading.Thread(target=app) for app in apps]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
+        def guarded(app, index):
+            try:
+                app()
+            except BaseException as error:        # noqa: BLE001 - re-raised below
+                with lock:
+                    errors.append((getattr(app, "rank", index), error))
 
-        # A failure inside the designated thread is captured there rather
-        # than raised, so that every rank still clears the barrier; this is
-        # where it becomes the caller's problem.
-        error, AerCommunicator._error = AerCommunicator._error, None
-        if error is not None:
-            raise error
+        threads = [threading.Thread(target=guarded, args=(app, index),
+                                    name=f"netqmpi-aer-rank-{index}")
+                   for index, app in enumerate(apps)]
+        try:
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+        finally:
+            # Class-level state belongs to this run whatever became of it; a
+            # failed run must not leave its communicators or its broken
+            # barrier to the next one in the same process.
+            self._reset()
+            AerCommunicator.communicators = []
+            AerCommunicator._barrier = None
+
+        causes = [error for _, error in errors
+                  if not isinstance(error, threading.BrokenBarrierError)]
+        if causes:
+            raise causes[0]
+        if errors:
+            raise errors[0][1]
 
     # ------------------------------------------------------------------
     # Internal helpers called by AerCommunicator.__exit__
@@ -196,7 +249,10 @@ class AerExecutorAdapter(Executor):
         if self._config.seed_simulator is not None:
             run_kwargs["seed_simulator"] = self._config.seed_simulator
 
-        simulator = AerSimulator()
+        simulator = AerSimulator(
+            method=self._config.method,
+            max_parallel_threads=self._config.max_parallel_threads,
+        )
         job = simulator.run(self._global_circuit, **run_kwargs)
         counts = job.result().get_counts()
 

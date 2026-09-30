@@ -36,18 +36,55 @@ SWAP.
 | | CUNQA | NetQASM | Aer | Qoala |
 |---|:--:|:--:|:--:|:--:|
 | `qsend` / `qrecv` | ✅ | ✅ | ⚠️ SWAP-based | ✅ |
-| `qscatter` / `qgather` | ✅ | ❌ | ❌ | ❌ |
-| `expose` / `unexpose` | ✅ | ❌ | ❌ | ❌ |
-| Controlled gates | ✅ | ❌ | partial | ❌ |
+| `qscatter` / `qgather` | ✅ | ⚠️ scatter only | ✅ | ❌ |
+| `expose` / `unexpose` | ✅ | ❌ | ✅ | ❌ |
+| Controlled gates | ✅ | `cx`, `cz` | ✅ incl. phase family | `cx`, `cz` |
 | `reset` | ✅ | ❌ | ✅ | ❌ |
 | `barrier` | ❌ | ❌ | ✅ | ❌ |
 | Several circuits per rank | ✅ | ✅ | ✅ | ❌ |
-| Hardware noise model | via vQPU definition | via `formalism` | ❌ | ✅ full qdevice |
+| Hardware noise model | via vQPU definition | T1/T2, gate and link fidelity | ❌ | ✅ full qdevice |
+| Noise **by default** | — | none (ideal) | none | none (ideal) |
 | Runs without special hardware | ❌ needs SLURM | ✅ | ✅ | ✅ |
 
 The per-gate breakdown, including which operations are *silently ignored* rather
 than rejected, is in the
 [gate support matrix](../guide/circuits.md#backend-support-matrix).
+
+:::{important}
+**The NetQASM and Qoala defaults are noiseless.** SquidASM's default network has
+perfect qubits (`t1 = t2 = 0`), perfect gates and perfect links; Qoala's default
+qdevice and links are perfect too. Every run of the multi-backend benchmark came
+out at fidelity 1 for that reason. Ask for noise explicitly — see the
+[netqasm](netqasm.md#configuration) and [qoala](qoala.md#configuration) blocks.
+:::
+
+## Validated scale
+
+What the benchmark apps (`scripts/benchmark/apps`) are known to run, per backend.
+*n* is the number of ranks, *q* the qubits per rank.
+
+| App | Aer | Qoala | NetQASM |
+|---|---|---|---|
+| `cascade` | ✅ up to n=256, q≤6 | ✅ up to n=128, q≤6 | ✅ q=1 up to n≈10 |
+| `ghz` | ✅ up to n=256 | ⚠️ fixed after 0.3.1, validate on the cluster | ⚠️ q=1 up to n=7, q=2 up to n=3 |
+| `qft` (teledata) | ✅ statevector-limited | ❌ needs controlled-P | ❌ needs controlled-P |
+| `qft_telegate` | ✅ statevector-limited | ❌ needs `expose` | ❌ needs `expose` |
+
+Two NetQASM limits of 0.3.1 are addressed after 0.3.1 but **not yet re-measured on
+the cluster**, so treat the table above as the proven ground:
+
+- **Two or more qubits per rank** hung in any program with two transfers in a
+  row between the same ranks (`cascade` with q ≥ 2, even at n=2). Fixed — see
+  [classical sockets](netqasm.md#classical-sockets).
+- **From about 10 ranks** SquidASM's EPR-socket set-up times out in wall-clock
+  time (`TimeoutError: Remote node did not initialize the correct rules`) —
+  intermittently at 10–12 ranks, always from 16. Mitigated: each rank now only
+  sets up EPR sockets with the ranks it talks to, and the timeout is raised to
+  60 s. See [scale limits](netqasm.md#scale-limits-and-the-squidasm-workarounds).
+
+The portability matrix in `test/test_portability_matrix.py` (`pytest -m slow`)
+runs `cascade` and `ghz` at q ∈ {1, 2} and n ∈ {2, 4, 8, 12} on every installed
+backend, and is the way to re-establish this table.
 
 (comm-results-shape)=
 ## The shape of `comm.results`
@@ -77,6 +114,9 @@ backend unable to build a link layer.
 A third environment holds the legacy `--netqasm1.0` path on NetQASM 1.x, which
 pins Python to 3.8 — NetQASM 2.x requires 3.9 or newer. CUNQA and Aer have no
 such constraints.
+
+On clusters with an older glibc (RHEL 8 has 2.28), NetSquid itself does not
+install: see [NetSquid on RHEL 8](../getting-started/installation.md#netsquid-on-older-clusters-rhel-8-and-friends).
 
 This is also why the CLI imports backends lazily: only the one you select is
 ever imported.

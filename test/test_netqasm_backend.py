@@ -258,3 +258,158 @@ def test_unsupported_gate_is_reported(tmp_path):
     """A gate NetQASM cannot express must be refused, not dropped."""
     with pytest.raises(NotImplementedError, match="Controlled-P"):
         run_app(UNSUPPORTED_GATE, 2, tmp_path, shots=1)
+
+
+# ----------------------------------------------------------------------
+# Runs that used to hang. Each goes to a child process with a deadline, so a
+# regression fails the test instead of stalling the session.
+# ----------------------------------------------------------------------
+
+#: Runs an app on the NetQASM backend and reports how it ended, then checks
+#: that nothing it leaves behind would keep the process alive.
+CHILD = """
+    import sys, threading, time
+    from netqmpi.runtime.adapters.netqasm import (
+        NetQASMExecutorAdapter, NetQASMRunConfig, NetQASMCommunicator)
+    from netqmpi.runtime.adapters.netqasm._compat import INSTALLED_MAJOR
+    from netqmpi.sdk.environment import Environment
+
+    captured = []
+    original = Environment.__init__
+    def capture(self, comm, executor):
+        original(self, comm, executor)
+        captured.append(self)
+    Environment.__init__ = capture
+
+    app, ranks, shots = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+    config = NetQASMRunConfig(shots=shots)
+    config.netqasm_major = INSTALLED_MAJOR
+    executor = NetQASMExecutorAdapter(ranks, config)
+    start = time.perf_counter()
+    try:
+        executor.run(executor.build_apps(app, ranks))
+    except BaseException as error:
+        print(f"RAISED {type(error).__name__}: {error}")
+    else:
+        results = {env.comm.rank: dict(env.comm.results) for env in captured}
+        print(f"RESULTS {results!r}")
+    print(f"SECONDS {time.perf_counter() - start:.1f}")
+    alive = [t.name for t in threading.enumerate()
+             if t is not threading.main_thread() and not t.daemon]
+    print(f"ALIVE {alive}")
+"""
+
+
+def run_in_child(source: str, ranks: int, tmp_path: Path, shots: int = 1,
+                 timeout: float = 120.0, env: dict = None) -> str:
+    """
+    Run an app on the NetQASM backend in a child process.
+
+    Args:
+        source: Body of the app module, or a path to an existing app.
+        ranks: Number of ranks.
+        tmp_path: Directory for the app and the driver.
+        shots: Number of simulated repetitions.
+        timeout: Seconds after which the run counts as hung.
+        env: Extra environment variables for the child.
+
+    Returns:
+        What the child printed.
+    """
+    import os
+    import subprocess
+    import sys
+
+    if isinstance(source, Path):
+        app = source
+    else:
+        app = tmp_path / "app.py"
+        app.write_text(textwrap.dedent(source))
+    driver = tmp_path / "driver.py"
+    driver.write_text(textwrap.dedent(CHILD))
+
+    repo = Path(__file__).resolve().parents[1]
+    child_env = dict(os.environ, PYTHONPATH=str(repo), **(env or {}))
+    try:
+        child = subprocess.run(
+            [sys.executable, str(driver), str(app), str(ranks), str(shots)],
+            cwd=tmp_path, capture_output=True, text=True, timeout=timeout,
+            env=child_env)
+    except subprocess.TimeoutExpired:
+        raise AssertionError(f"the run hung: still going after {timeout}s")
+    return child.stdout + child.stderr
+
+
+#: Two transfers in a row from rank 0 to rank 1: |1> then |1>.
+TWO_SENDS_IN_A_ROW = """
+    from netqmpi.sdk.environment import Environment
+
+    def main(env: Environment = None):
+        comm, rank = env.comm, env.comm.rank
+        with comm:
+            circuit = env.create_circuit(num_qubits=2, num_clbits=2)
+            if rank == 0:
+                circuit.x(0)
+                circuit.x(1)
+                comm.qsend(circuit, [0], 1)
+                comm.qsend(circuit, [1], 1)
+            else:
+                comm.qrecv(circuit, [0], 0)
+                comm.qrecv(circuit, [1], 0)
+            circuit.measure(0, 0)
+            circuit.measure(1, 1)
+"""
+
+
+def test_two_sends_in_a_row_arrive(tmp_path):
+    """
+    N1: consecutive transfers in the same direction used to deadlock.
+
+    See ``test_netqasm_sockets.py`` for the mechanism.
+    """
+    output = run_in_child(TWO_SENDS_IN_A_ROW, 2, tmp_path, shots=2, timeout=30)
+    assert "RESULTS {0: {'00': 2}, 1: {'11': 2}}" in output, output
+
+
+def test_cascade_with_two_qubits_per_rank_finishes(tmp_path):
+    """N1 as the benchmark met it: cascade, n=2, q=2, one shot, under 30 s."""
+    app = Path(__file__).resolve().parents[1] / "scripts/benchmark/apps/cascade.py"
+    output = run_in_child(app, 2, tmp_path, shots=1, timeout=30,
+                          env={"NQB_QUBITS_PER_RANK": "2"})
+    assert "RESULTS {0: {'00': 1}, 1: {'00': 1}}" in output, output
+
+
+#: A chain in which rank 1 fails *during the simulation*: SDG is refused only
+#: when the operation runs, inside a SquidASM program thread, while the
+#: ranks after it wait for a qubit that will never come.
+FAILS_MID_SIMULATION = """
+    from netqmpi.sdk.environment import Environment
+
+    def main(env: Environment = None):
+        comm, rank, size = env.comm, env.comm.rank, env.comm.size
+        with comm:
+            circuit = env.create_circuit(num_qubits=1, num_clbits=1)
+            if rank > 0:
+                comm.qrecv(circuit, [0], rank - 1)
+            if rank == 1:
+                circuit.sdg(0)
+            if rank < size - 1:
+                comm.qsend(circuit, [0], rank + 1)
+            circuit.measure(0, 0)
+"""
+
+
+@pytest.mark.parametrize("ranks", [2, 8])
+def test_a_rank_failing_mid_simulation_fails_the_run(ranks, tmp_path):
+    """G1: the rank's exception comes out promptly, and SquidASM is stopped."""
+    output = run_in_child(FAILS_MID_SIMULATION, ranks, tmp_path, timeout=120)
+    assert "RAISED NotImplementedError: SDG" in output, output
+    assert "ALIVE []" in output, output
+
+
+def test_a_program_too_big_for_the_default_network_is_refused(tmp_path):
+    """N3: six qubits cascaded need seven at once; nodes have five."""
+    app = Path(__file__).resolve().parents[1] / "scripts/benchmark/apps/cascade.py"
+    output = run_in_child(app, 2, tmp_path, timeout=60,
+                          env={"NQB_QUBITS_PER_RANK": "6"})
+    assert "RAISED ValueError" in output and "needs 7 qubits" in output, output

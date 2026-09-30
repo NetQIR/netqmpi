@@ -150,6 +150,61 @@ CUNQA and Aer have no such constraints and can share an environment with any of
 them.
 :::
 
+### NetSquid on older clusters (RHEL 8 and friends)
+
+The NetSquid 1.1.8 wheels are tagged `linux_x86_64`, not `manylinux`, and need
+**glibc ≥ 2.32**. RHEL 8 ships 2.28, and the private index has no older NetSquid
+that would do instead, so `pip install netsquid` either refuses or installs a
+module that fails to import. Run those environments inside a container with a
+newer userland instead. With [Apptainer](https://apptainer.org) (formerly
+Singularity), which most HPC sites allow without root:
+
+```text
+# netsquid.def
+Bootstrap: docker
+From: ubuntu:24.04
+
+%post
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        python3 python3-venv python3-dev build-essential git ca-certificates
+    rm -rf /var/lib/apt/lists/*
+```
+
+```bash
+apptainer build netsquid.sif netsquid.def      # once; no credentials in the image
+```
+
+Keep the virtual environments **outside** the image, on your home or project
+file system, and create them *through* the container, so that they are built
+against its glibc and its Python (3.12 on Ubuntu 24.04). Your NetSquid
+credentials then never end up inside the image:
+
+```bash
+export PIP_EXTRA_INDEX_URL='https://<user>:<url-encoded-pwd>@pypi.netsquid.org'
+
+# SquidASM (--netqasm)
+apptainer exec netsquid.sif python3 -m venv $HOME/envs/netqasm2
+apptainer exec netsquid.sif $HOME/envs/netqasm2/bin/pip install \
+    "squidasm>=0.13" "netqasm>=2,<=2.0.2" netqmpi
+
+# Qoala (--qoala): a separate environment, see the table above
+apptainer exec netsquid.sif python3 -m venv $HOME/envs/qoala
+apptainer exec netsquid.sif $HOME/envs/qoala/bin/pip install qoala netqmpi
+```
+
+Every run then goes through the container as well — in a Slurm job just as on a
+login node:
+
+```bash
+srun apptainer exec netsquid.sif \
+    $HOME/envs/netqasm2/bin/netqmpi -n 8 app.py --netqasm --shots 10
+```
+
+`apptainer exec` binds your home and the current directory by default; add
+`--bind /path/to/project` for anything else the run reads or writes. The Aer
+and CUNQA environments do not need the container.
+
 ## Verifying the installation
 
 ```bash

@@ -90,6 +90,23 @@ default `Munich` simulator, or size the definition down — see
 the client, so any exception it raises leaves the vQPUs waiting and the program
 stuck in `future.get()`.
 
+**A rank that failed, on Aer or NetQASM (0.3.1 and earlier).** Both run their ranks in
+threads that wait for each other; a rank that raised left the others waiting
+forever. Now the first failure ends the run with that rank's exception.
+
+**NetQASM with two transfers in a row between the same ranks (0.3.1 and earlier).**
+See [classical sockets](../backends/netqasm.md#classical-sockets).
+
+**Finding out where it is stuck.** Have Python dump every thread's stack after a
+while:
+
+```python
+import faulthandler
+faulthandler.dump_traceback_later(60, exit=False)
+```
+
+The portability matrix (`pytest -m slow`) does this for every case it runs.
+
 ### A gate seems to do nothing
 
 Some adapters ignore gate names they do not know instead of raising. A `swap` on

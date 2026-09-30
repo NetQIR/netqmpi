@@ -34,7 +34,8 @@ from netqmpi.sdk.environment import Environment  # noqa: E402
 SHOTS = 20
 
 
-def run_app(source: str, ranks: int, tmp_path: Path, shots: int = SHOTS):
+def run_app(source: str, ranks: int, tmp_path: Path, shots: int = SHOTS,
+            **config):
     """
     Run a NetQMPI program on the Qoala backend.
 
@@ -43,6 +44,7 @@ def run_app(source: str, ranks: int, tmp_path: Path, shots: int = SHOTS):
         ranks: Number of ranks to run.
         tmp_path: Directory to write the app to.
         shots: Number of simulated repetitions.
+        **config: Other :class:`QoalaRunConfig` fields to set.
 
     Returns:
         One histogram per rank, keyed by rank. Bits are ordered by ascending
@@ -60,7 +62,7 @@ def run_app(source: str, ranks: int, tmp_path: Path, shots: int = SHOTS):
 
     Environment.__init__ = capture
     try:
-        config = QoalaRunConfig()
+        config = QoalaRunConfig(**config)
         config.shots = shots
         executor = QoalaExecutorAdapter(ranks, config)
         executor.run(executor.build_apps(str(app), ranks))
@@ -244,26 +246,63 @@ def test_round_trip_keeps_its_state(tmp_path):
     assert results[0] == {"1": 10}, results
 
 
-@pytest.mark.xfail(raises=KeyError, strict=True,
-                   reason="the adapter mis-compiles a local gate placed "
-                          "between two transfers on the same rank")
 def test_swap_around_a_round_trip(tmp_path):
     """
-    A local gate on both sides of a round trip must survive compilation.
+    A local gate on both sides of a round trip must survive the simulation.
 
-    This is the smallest reproduction of what stops ``apps/ghz.py`` running
-    on Qoala. The round trip alone is fine (see
-    :func:`test_round_trip_keeps_its_state`) and so are the swaps on their
-    own; putting a swap on each side of it makes the generated program stop
-    before it returns the measurement, and ``_build_counts`` then raises
-    ``KeyError`` looking for the host variable that never came back.
-
-    Marked ``xfail(strict=True)`` so that it fails loudly the day the
-    generated program is fixed, which is when this expectation wants
-    checking.
+    This is the smallest reproduction of what stopped ``apps/ghz.py`` running
+    on Qoala (Q1). The round trip alone was fine (see
+    :func:`test_round_trip_keeps_its_state`) and so were the swaps on their
+    own; with a swap on each side, rank 0 holds a qubit across the trip, and
+    shots simulated concurrently on shared memory starved each other of
+    qubits until the simulation ran out of events. ``_build_counts`` then
+    raised ``KeyError`` on the variable that never came back. See
+    ``test_qoala_shots.py`` for the mechanism.
     """
     results = run_app(SWAP_AROUND_A_ROUND_TRIP, 2, tmp_path, shots=10)
     assert results[0] == {"1": 10}, results
+
+
+@pytest.mark.parametrize("ranks", [2, 3, 4])
+def test_ghz_completes_with_fidelity_one(ranks, tmp_path, monkeypatch):
+    """Q1: ``apps/ghz.py`` finishes and reads all-zeros on every rank."""
+    monkeypatch.setenv("NQB_QUBITS_PER_RANK", "1")
+    app = Path(__file__).resolve().parents[1] / "scripts/benchmark/apps/ghz.py"
+    results = run_app(app.read_text(), ranks, tmp_path, shots=5)
+    assert results == {rank: {"0": 5} for rank in range(ranks)}, results
+
+
+def test_shots_sharing_a_simulation_still_finish(tmp_path):
+    """Several shots per simulation get enough memory not to starve."""
+    results = run_app(SWAP_AROUND_A_ROUND_TRIP, 2, tmp_path, shots=10,
+                      concurrent_shots=5)
+    assert results[0] == {"1": 10}, results
+
+
+#: A fair coin on rank 0.
+COIN = """
+    from netqmpi.sdk.environment import Environment
+
+    def main(env: Environment = None):
+        comm = env.comm
+        with comm:
+            circuit = env.create_circuit(num_qubits=1, num_clbits=1)
+            if comm.rank == 0:
+                circuit.h(0)
+            circuit.measure(0, 0)
+"""
+
+
+def test_shots_simulated_separately_are_independent(tmp_path):
+    """
+    One simulation per shot must not replay the same random numbers.
+
+    If resetting NetSquid between shots also reset its random state, every
+    shot would draw the same outcome and a coin would always land the same
+    way.
+    """
+    results = run_app(COIN, 2, tmp_path, shots=40)
+    assert set(results[0]) == {"0", "1"}, results
 
 
 def test_telegate_is_refused(tmp_path):

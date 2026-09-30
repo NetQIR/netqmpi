@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 import importlib
-from typing import Any, List, Dict, TYPE_CHECKING
+from typing import Any, List, Dict, Optional, Set, TYPE_CHECKING
 
 from netqasm.sdk import EPRSocket, Qubit
 from netqasm.sdk.external import NetQASMConnection, Socket
@@ -23,6 +23,9 @@ from netqasm.runtime.application import (
 from netqasm.runtime.process_logs import create_app_instr_logs, make_last_log
 from netqasm.runtime.settings import Formalism, Simulator, set_simulator
 from netqasm.util.yaml import load_yaml
+
+from netqmpi.runtime.adapters.netqasm import _simulation
+from netqmpi.sdk.operations import QRecv, QSend
 
 if TYPE_CHECKING:
     from netqmpi.runtime.adapters.netqasm.netqasm_executor import NetQASMRunConfig
@@ -36,6 +39,12 @@ class NetQASMCommunicator(QMPICommunicator):
     This class provides the backend-specific communication resources used
     by the NetQASM runtime adapter, including the NetQASM connection,
     EPR sockets, and lazily created classical sockets.
+
+    Both kinds of socket are opened only towards the *peers* of the rank —
+    the ranks its traced program sends to or receives from. Opening an EPR
+    socket makes SquidASM set up a circuit with the remote node under a
+    wall-clock timeout, so doing it towards every rank cost O(size^2)
+    set-ups per shot where a chain or a star needs O(size).
 
     Args:
         rank: Numeric index of the current rank.
@@ -76,7 +85,12 @@ class NetQASMCommunicator(QMPICommunicator):
         )
         
         self._connection = None
-        
+
+        # Classical sockets of the current round, one per peer. See get_socket.
+        self._sockets: Dict[int, Socket] = {}
+        # Ranks the traced program talks to; filled in by __exit__.
+        self._peers: Optional[Set[int]] = None
+
         self._config = config
         NetQASMCommunicator.communicators.append(self)
 
@@ -115,7 +129,13 @@ class NetQASMCommunicator(QMPICommunicator):
         Returns:
             The result of the underlying connection ``__exit__`` method.
         """
-        
+        # A rank that failed while tracing has nothing to simulate, and the
+        # run cannot go on without it: forget the run and let the exception
+        # propagate.
+        if exc_type is not None:
+            NetQASMCommunicator.reset_run()
+            return None
+
         # SquidASM looks up program_inputs[party] for every program it runs
         # and then writes the AppConfig back into that mapping, so each party
         # needs an entry, and its own mutable one. An empty mapping made
@@ -126,6 +146,10 @@ class NetQASMCommunicator(QMPICommunicator):
             for r in range(self.size)
         }
         
+        self._peers = set()
+        for circuit in self.circuits:
+            self._peers |= circuit.peers()
+
         for circuit in self.circuits:
             # Translate before the simulator is anywhere near: the emitted
             # operations are closures that only touch qubits when they run,
@@ -144,6 +168,7 @@ class NetQASMCommunicator(QMPICommunicator):
                 # again on first use; keeping them would hand this shot
                 # qubits belonging to a connection that no longer exists.
                 circuit.reset_round()
+                self.close_sockets()
 
                 self._connection = NetQASMConnection(
                     app_name=app_config.app_name,
@@ -159,12 +184,17 @@ class NetQASMCommunicator(QMPICommunicator):
                 # outcomes as it ran shots, which no other backend does and
                 # nothing downstream could compare against.
                 shot = [0] * circuit.num_clbits
-                for op in circuit.translated_ops:
-                    outcome = op()
-                    if outcome is not None:
-                        cbit, result = outcome
-                        self.flush()
-                        shot[cbit] = int(result)
+                try:
+                    for op in circuit.translated_ops:
+                        outcome = op()
+                        if outcome is not None:
+                            cbit, result = outcome
+                            self.flush()
+                            shot[cbit] = int(result)
+                finally:
+                    # The round's sockets must be gone before SquidASM starts
+                    # the next round; see get_socket.
+                    self.close_sockets()
 
                 key = "".join(str(bit) for bit in reversed(shot))
                 self.results[key] = self.results.get(key, 0) + 1
@@ -176,63 +206,101 @@ class NetQASMCommunicator(QMPICommunicator):
             )
 
         if len(NetQASMCommunicator.netqasm_circuits) == self.size:
-            roles = netqasm_env.load_roles_config(self._config.roles)
-            if roles is None:
-                roles = {prog.party: prog.party for prog in NetQASMCommunicator.netqasm_circuits}
-
-            app_instance = ApplicationInstance(
-                app=Application(programs=NetQASMCommunicator.netqasm_circuits, metadata=None),
-                program_inputs=argv_per_rank,
-                network=None,
-                party_alloc=roles,
-                logging_cfg=None,
-            )
-            
-            simulator = os.environ.get("NETQASM_SIMULATOR", Simulator.NETSQUID.value)
-            set_simulator(simulator)
-
-            simulate_application = importlib.import_module("netqasm.sdk.external").simulate_application
-
-            formalism = getattr(self._config, "formalism", Formalism.KET)
-            log_cfg = self._config.log_cfg
-            network_config = self._config.network_config
-
-            if network_config is not None:
-                network_config = network_cfg_from_path(".", network_config)
-
-            # ``num_rounds`` is how SquidASM repeats an experiment, and it
-            # was pinned at 1: every run returned a single sample whatever
-            # --shots asked for, so a 50/50 outcome came back as a certainty.
-            # Asking for real repeats needs the sockets to stop being cached
-            # (a second round finds the cached one closed, "Socket is not
-            # connected so cannot send") and each shot to start from empty
-            # qubit slots. Results accumulate across the rounds.
-            for comm in NetQASMCommunicator.communicators:
-                comm._reset_sockets()
-
-            simulate_application(
-                app_instance=app_instance,
-                num_rounds=max(1, self._config.shots),
-                network_cfg=network_config,
-                formalism=formalism,
-                post_function=self._config.post_function,
-                log_cfg=log_cfg,
-                use_app_config=True,
-                enable_logging=self._config.enable_logging,
-                hardware=self._config.hardware,
-            )
-
-            if self._config.enable_logging and log_cfg is not None:
-                create_app_instr_logs(log_cfg.log_subroutines_dir)
-                make_last_log(log_cfg.log_subroutines_dir)
-
-            # Class-level state belongs to one run. Leaving it behind meant a
-            # second run in the same process assembled an application out of
-            # both runs' programs, so the ranks never matched their own
-            # count and the simulation was never reached.
-            NetQASMCommunicator.reset_run()
+            try:
+                self._simulate(argv_per_rank)
+            finally:
+                # Class-level state belongs to one run. Leaving it behind
+                # meant a second run in the same process assembled an
+                # application out of both runs' programs, so the ranks never
+                # matched their own count and the simulation was never
+                # reached.
+                NetQASMCommunicator.reset_run()
 
         return None
+
+    def _simulate(self, argv_per_rank: dict) -> None:
+        """
+        Run every rank's program through SquidASM, once per shot.
+
+        Called by the last rank to leave its block, once every rank's
+        program is registered.
+
+        Args:
+            argv_per_rank: Program inputs, one mutable mapping per party.
+
+        Raises:
+            ValueError: If the network cannot hold the program (see
+                :func:`~netqmpi.runtime.adapters.netqasm._simulation.check_capacity`)
+                or a configured network file does not exist.
+            Exception: Whatever a rank's program raised during the
+                simulation. The SquidASM backend is stopped first, so the
+                process can still exit and run again.
+        """
+        programs = NetQASMCommunicator.netqasm_circuits
+        roles = netqasm_env.load_roles_config(self._config.roles)
+        if roles is None:
+            roles = {prog.party: prog.party for prog in programs}
+
+        app_instance = ApplicationInstance(
+            app=Application(programs=programs, metadata=None),
+            program_inputs=argv_per_rank,
+            network=None,
+            party_alloc=roles,
+            logging_cfg=None,
+        )
+
+        simulator = os.environ.get("NETQASM_SIMULATOR", Simulator.NETSQUID.value)
+        set_simulator(simulator)
+
+        simulate_application = importlib.import_module("netqasm.sdk.external").simulate_application
+
+        formalism = getattr(self._config, "formalism", Formalism.KET)
+        log_cfg = _simulation.log_config(self._config)
+
+        if self._config.network_config is not None:
+            network_config = network_cfg_from_path(".", self._config.network_config)
+            if network_config is None:
+                raise ValueError(
+                    f"NetQASM network configuration "
+                    f"{self._config.network_config!r} does not exist.")
+        else:
+            # SquidASM's default network, but sized and tuned by the config.
+            network_config = _simulation.build_network(
+                sorted(set(roles.values())), self._config)
+
+        _simulation.check_capacity(network_config, roles,
+                                   NetQASMCommunicator.communicators)
+
+        # ``num_rounds`` is how SquidASM repeats an experiment, and it
+        # was pinned at 1: every run returned a single sample whatever
+        # --shots asked for, so a 50/50 outcome came back as a certainty.
+        # Asking for real repeats needs the classical sockets to live one
+        # round only (see get_socket) and each shot to start from empty
+        # qubit slots. Results accumulate across the rounds.
+        for comm in NetQASMCommunicator.communicators:
+            comm._reset_sockets()
+
+        with _simulation.squidasm_patches(self._config.epr_setup_timeout,
+                                          self._config.poll_interval):
+            try:
+                simulate_application(
+                    app_instance=app_instance,
+                    num_rounds=max(1, self._config.shots),
+                    network_cfg=network_config,
+                    formalism=formalism,
+                    post_function=self._config.post_function,
+                    log_cfg=log_cfg,
+                    use_app_config=True,
+                    enable_logging=self._config.enable_logging,
+                    hardware=self._config.hardware,
+                )
+            except BaseException:
+                _simulation.stop_backend()
+                raise
+
+        if self._config.enable_logging and log_cfg is not None:
+            create_app_instr_logs(log_cfg.log_subroutines_dir)
+            make_last_log(log_cfg.log_subroutines_dir)
 
     @classmethod
     def reset_run(cls) -> None:
@@ -246,10 +314,16 @@ class NetQASMCommunicator(QMPICommunicator):
         Give this rank the EPR sockets the coming run will be connected with.
 
         Called once per run, before the rounds begin; the classical sockets
-        are built on demand by :meth:`get_socket`.
+        are built on demand by :meth:`get_socket`. Only the ranks the traced
+        program talks to get one, or every other rank if the program has not
+        been traced.
         """
+        peers = self._peers
+        if peers is None:
+            peers = set(range(self.size)) - {self.rank}
+
         self._epr_sockets = {self.get_rank_name(i): {} for i in range(self.size)}
-        for other in range(self.size):
+        for other in sorted(peers):
             if other != self.rank:
                 self._epr_sockets[self.get_rank_name(self.rank)][
                     self.get_rank_name(other)
@@ -262,13 +336,25 @@ class NetQASMCommunicator(QMPICommunicator):
 
     def get_socket(self, my_rank: int, other_rank: int) -> Socket:
         """
-        Return a classical socket between two ranks.
+        Return the classical socket between two ranks for the current round.
 
-        A fresh one every time, deliberately. These used to be cached for
-        the life of the communicator, which survives the network they were
-        opened on: the second shot then reached for a socket belonging to a
-        torn-down network and failed with "Socket is not connected so cannot
-        send". A socket is cheap, and it belongs to one connection.
+        One socket per peer and per round: the first transfer with a peer
+        in a round opens it, every later one in the same round reuses it,
+        and :meth:`close_sockets` drops it when the round ends.
+
+        *Not one per transfer.* Every socket between the same two ranks has
+        the same key in NetQASM's socket hub, and closing one removes the
+        marker its peer's socket left there. With a fresh socket per
+        transfer, a sender that ran ahead — its second transfer's socket
+        opened and closed while the receiver was still in the first one —
+        had that marker erased when the receiver closed its first socket,
+        and the receiver's second socket then waited for a peer that was
+        gone. Two transfers in a row in the same direction hung that way.
+
+        *Not one per run either.* SquidASM resets the hub between rounds, so
+        a socket kept across rounds is no longer connected ("Socket is not
+        connected so cannot send"), and one released late would, when
+        collected, erase the hub entries of the next round's socket.
 
         Args:
             my_rank: Rank requesting the socket.
@@ -277,7 +363,22 @@ class NetQASMCommunicator(QMPICommunicator):
         Returns:
             A classical socket connecting the two ranks.
         """
-        return Socket(self.get_rank_name(my_rank), self.get_rank_name(other_rank))
+        socket = self._sockets.get(other_rank)
+        if socket is None:
+            socket = Socket(self.get_rank_name(my_rank),
+                            self.get_rank_name(other_rank))
+            self._sockets[other_rank] = socket
+        return socket
+
+    def close_sockets(self) -> None:
+        """
+        Drop the classical sockets of the current round.
+
+        A NetQASM thread socket leaves the hub when it is collected, and
+        this holds the only lasting reference to it, so dropping it closes
+        it.
+        """
+        self._sockets = {}
 
     def get_epr_socket(self, my_rank: int, other_rank: int) -> EPRSocket:
         """

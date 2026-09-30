@@ -155,6 +155,8 @@ which rank follows from the classical-bit offsets, in rank order.
 | `shots` | `1024` | Number of simulation shots |
 | `transfer_mode` | `"swap"` | `"swap"` or `"teleport"` |
 | `seed_simulator` | `None` | RNG seed, for reproducible runs |
+| `method` | `"automatic"` | AerSimulator method. Automatic picks `stabilizer` for Clifford-only programs and `statevector` for the rest, so the backend's cost changes nature from program to program; fix it when comparing timings |
+| `max_parallel_threads` | `0` | Threads Aer may use; `0` means every core. Fix it when several runs share a node |
 
 ## API
 

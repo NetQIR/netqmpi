@@ -54,22 +54,71 @@ class NetQASMRunConfig(RunConfig):
             like a hang. Raise it with ``--shots`` when the statistics
             matter more than the wait.
         formalism: Quantum state formalism to use in the simulation.
-        network_config: Network configuration describing the simulated
-            topology. If ``None``, the default topology is used.
+        enable_logging: Whether SquidASM writes its instruction and
+            communication logs. Off by default: the logs cost disk I/O inside
+            the simulation, and SquidASM names their directory to the second,
+            so runs sharing a working directory used to collide on it with
+            ``FileExistsError``. When on, each run logs to a directory of its
+            own under ``./log`` unless ``log_cfg.log_dir`` names one.
+        hardware: SquidASM node hardware, ``"generic"`` or ``"nv"``.
+        network_config: Path to a NetQASM network YAML describing the
+            simulated topology. If ``None``, a fully connected network is
+            built from the fields below.
+        num_qubits: Qubits per node in the built network. SquidASM's own
+            default is 5, which is what this keeps. A run whose ranks need
+            more at once is refused before it starts.
+        t1: Amplitude-damping time of every qubit, in ns. 0 disables it.
+        t2: Dephasing time of every qubit, in ns. 0 disables it.
+        gate_fidelity: Fidelity of every gate, in ``[0, 1]``.
+        link_fidelity: Fidelity of the EPR pairs every link delivers, in
+            ``[0, 1]``. 1 means a noiseless link.
+        link_noise: SquidASM noise model applied when ``link_fidelity`` is
+            below 1: ``"Depolarise"``, ``"DiscreteDepolarise"`` or
+            ``"Bitflip"``.
+        epr_setup_timeout: Wall-clock seconds a node waits for a peer to set
+            up an EPR socket. SquidASM hard-codes 5, which runs with a dozen
+            ranks or more exceed on a loaded machine.
+        poll_interval: Seconds SquidASM's main thread sleeps between checks
+            on the program threads, instead of spinning.
         log_cfg: NetQASM log configuration controlling per-rank
             instruction logging.
+
+    With the defaults the simulated network is **ideal**: no decoherence
+    (``t1 = t2 = 0``), perfect gates and perfect links, so every fidelity it
+    reports is 1 unless the program itself is wrong.
     """
 
     netqasm_major: int = 2
     shots: int = 50
     formalism: Formalism = field(default_factory=lambda: Formalism.KET)
-    enable_logging: bool = True
+    enable_logging: bool = False
     hardware: str = "generic"
     post_function: Optional[Callable] = None
     network_config: Optional[Any] = None
+    num_qubits: int = 5
+    t1: float = 0.0
+    t2: float = 0.0
+    gate_fidelity: float = 1.0
+    link_fidelity: float = 1.0
+    link_noise: str = "Depolarise"
+    epr_setup_timeout: float = 60.0
+    poll_interval: float = 0.001
     log_cfg: Optional[Any] = None
     argv = None
     roles: str = "roles.yaml"
+
+    def __post_init__(self) -> None:
+        if self.num_qubits < 1:
+            raise ValueError(f"num_qubits must be at least 1, got {self.num_qubits}.")
+        if self.t1 < 0 or self.t2 < 0:
+            raise ValueError(f"t1 and t2 must not be negative, got {self.t1}, {self.t2}.")
+        for name in ("gate_fidelity", "link_fidelity"):
+            value = getattr(self, name)
+            if not 0.0 <= value <= 1.0:
+                raise ValueError(f"{name} must be in [0, 1], got {value}.")
+        if self.epr_setup_timeout <= 0:
+            raise ValueError(
+                f"epr_setup_timeout must be positive, got {self.epr_setup_timeout}.")
 
 # ---------------------------------------------------------------------------
 # Concrete Executor

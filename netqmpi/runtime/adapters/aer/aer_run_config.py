@@ -36,8 +36,19 @@ class AerSimulatorConfig(RunConfig):
             gates and a pair of ancillas per transfer, so on its own it
             would add cost without adding information.
         seed_simulator: Optional RNG seed for reproducible simulations.
+        method: AerSimulator simulation method (``"automatic"``,
+            ``"statevector"``, ``"stabilizer"``, ``"matrix_product_state"``,
+            ...). ``"automatic"`` lets Aer choose per circuit, which means a
+            Clifford-only probe runs on the stabilizer simulator and a QFT
+            on the statevector one: fine for results, but it changes what
+            the backend's cost measures from one program to the next. Fix
+            it when comparing timings across programs.
+        max_parallel_threads: Threads Aer may use; ``0`` (Aer's default)
+            means every core. Fix it when several runs share a node.
     """
 
     shots: int = 1024
     transfer_mode: str = "swap"        # "swap" | "teleport"
     seed_simulator: Optional[int] = None
+    method: str = "automatic"
+    max_parallel_threads: int = 0

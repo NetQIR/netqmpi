@@ -201,6 +201,21 @@ supplies what the SDK needs and nothing more:
 | `make_circuit` | fixture | One traced circuit on a fresh communicator |
 | `make_group` | fixture | One circuit per rank of the same program, for checking records against each other |
 
+## Slow tests
+
+`test/test_portability_matrix.py` runs the benchmark apps on every installed
+backend at q ∈ {1, 2} qubits per rank and n ∈ {2, 4, 8, 12} ranks, each in a
+child process with a deadline, and checks that every rank reads all-zeros. It
+is marked `slow`:
+
+```bash
+pytest -m "not slow"     # the everyday suite
+pytest -m slow           # the matrix
+```
+
+It exists because none of the failures the multi-backend benchmark found shows
+up with one qubit per rank and at most three ranks.
+
 ## Known gaps the suite pins
 
 Two tests are expected to fail today. They use `xfail(strict=True)`, so the day

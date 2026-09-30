@@ -67,14 +67,36 @@ three things followed from that:
   so it was dispatched down the single-qubit path and died as an unknown name.
 :::
 
-:::{caution}
-A local gate placed on **both sides of a round trip** — swap a qubit into a
-scratch slot, send it away, receive it back, swap it out again — makes the
-generated `.iqoala` program stop before returning its measurement, and
-`_build_counts` then raises `KeyError` looking for a host variable that never
-came back. The round trip alone is fine, and so are the swaps alone. This is
-what stops `apps/ghz.py` running on Qoala; it is pinned as a strict `xfail` in
-`test/test_qoala_backend.py` so that it reports the day it is fixed.
+:::{admonition} Shots are simulated one at a time
+:class: note
+
+Up to 0.3.1 every shot went into one batch, and Qoala runs the instances of a
+batch **concurrently on nodes whose physical qubits they share**. A program
+that keeps a qubit allocated across a round trip — `apps/ghz.py` holds its
+control while the tour is away — could then have two shots each holding part of
+a node's memory and waiting for the rest. Qoala's scheduler waits for memory
+rather than failing, NetSquid stops when no event is left, and the run came back
+with programs unfinished: `KeyError: 'm_8'` (`m_16` at three ranks, `m_24` at
+four — rank 0's final measurement). The compiled program was correct all along.
+
+Each shot is now its own simulation by default, which is also what a shot means
+(the program alone on its nodes: with memory noise, sharing the device would
+stretch its timeline and add decoherence it would not otherwise suffer). The
+price is one network built per shot. `concurrent_shots: k` puts *k* shots in each
+simulation and gives every node *k* times the qubits a shot needs, so they cannot
+starve each other; use it for noiseless runs where speed matters.
+
+A program that does not finish is now reported as a deadlock, naming the rank
+and the missing variable, instead of as a bare `KeyError`.
+:::
+
+:::{admonition} Validated scale
+:class: note
+
+`cascade` runs up to 128 ranks and 6 qubits per rank. `ghz` failed in every
+configuration before the change above and needs re-validating at scale. `qft`
+needs controlled-P and `qft_telegate` needs `expose`, neither of which this
+adapter implements. The default qdevice and links are **perfect**.
 :::
 
 More than one circuit per rank is rejected explicitly:

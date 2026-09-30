@@ -22,7 +22,7 @@ to the simulator as soon as it is invoked on a
 """
 from __future__ import annotations
 import numpy as np
-from typing import TYPE_CHECKING, Any, List, Optional
+from typing import TYPE_CHECKING, Any, List, Optional, Set
 
 from netqasm.sdk import EPRSocket, Qubit
 from netqasm.sdk.external import Socket
@@ -108,6 +108,55 @@ class NetQASMCircuitAdapter(Circuit):
     def translated_ops(self) -> List[Any]:
         """The operations emitted for this circuit, in program order."""
         return self._translated_ops
+
+    def peers(self) -> Set[int]:
+        """
+        Return the ranks this circuit sends qubits to or receives them from.
+
+        Returns:
+            The peer ranks, from the traced program.
+        """
+        peers = set()
+        for op in self.ops.flatten():
+            if isinstance(op, QSend):
+                peers.add(op.dest_rank)
+            elif isinstance(op, QRecv):
+                peers.add(op.src_rank)
+        return peers
+
+    def peak_qubits(self) -> int:
+        """
+        Return the most qubits this circuit holds at once on its node.
+
+        Follows the adapter's allocation rules over the traced program: a
+        slot holds a qubit from its first use until it is measured or sent,
+        a ``qsend`` holds the EPR half next to the qubit it sends, and a
+        ``qrecv`` holds the incoming EPR half next to whatever its slot held
+        until the correction lands.
+
+        Returns:
+            The peak number of qubits live at the same time.
+        """
+        live: Set[int] = set()
+        peak = 0
+        for op in self.ops.flatten():
+            if isinstance(op, QSend):
+                for qubit in op.qubits:
+                    live.add(qubit)
+                    peak = max(peak, len(live) + 1)
+                    live.discard(qubit)
+            elif isinstance(op, QRecv):
+                for qubit in op.qubits:
+                    peak = max(peak, len(live) + 1)
+                    live.add(qubit)
+            elif isinstance(op, Measure):
+                live.update(op.qubits)
+                peak = max(peak, len(live))
+                live.difference_update(op.qubits)
+            else:
+                live.update(q for q in op.qubits if q < self.num_qubits)
+                peak = max(peak, len(live))
+        return peak
 
     def _qubit(self, index: int) -> Qubit:
         """
