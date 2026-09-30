@@ -15,3 +15,6 @@ cunqa_build
 # Sphinx build output
 docs/build/
 .venv-docs/
+
+# Written by setup.py into builds, never into the sources
+netqmpi/_build_info.py

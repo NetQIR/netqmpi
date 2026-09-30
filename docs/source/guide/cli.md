@@ -53,6 +53,24 @@ netqmpi -n 2 examples/1_send_recv.py --aer --shots 1024
 netqmpi -n 2 examples/1_send_recv.py --qoala --config qoala.yaml
 ```
 
+## Which NetQMPI is this?
+
+```bash
+netqmpi --version
+# NetQMPI 0.3.1 (tag v0.3.1 + 1 commit, commit 662436b0544560689612d7546eab9089a423f783)
+```
+
+It prints the release declared in `setup.py`, the latest git tag, how many
+commits the code is past it, the full commit hash, and whether the working tree
+had uncommitted changes. From Python, `netqmpi.__version__` is the release and
+`netqmpi.get_build_info()` returns every field, `as_dict()` included, to store
+next to results.
+
+An installed wheel or sdist reports the tag and commit it was **built** from:
+`setup.py` freezes them into `netqmpi/_build_info.py` in the build (never in the
+sources). A checkout — plain or installed with `pip install -e .` — asks git
+when first asked, so it always describes the code that is checked out now.
+
 ## Lazy backend imports
 
 The CLI imports **no** backend at module level. The adapter package is imported

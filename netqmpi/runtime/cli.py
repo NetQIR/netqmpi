@@ -72,6 +72,25 @@ def simulate(
     if timer:
         print(f"finished simulation in {round(time.perf_counter() - start, 2)} seconds")
 
+class _VersionAction(argparse.Action):
+    """``--version``: print release, git tag and commit, then exit.
+
+    Unlike argparse's own ``version`` action this asks git only when the flag
+    is given, not every time the parser is built.
+    """
+
+    def __init__(self, option_strings, dest=argparse.SUPPRESS,
+                 default=argparse.SUPPRESS, help=None):
+        super().__init__(option_strings, dest=dest, default=default, nargs=0,
+                         help=help)
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        from netqmpi.version import describe
+
+        print(describe())
+        parser.exit()
+
+
 def main():
     """
     Parse command-line arguments and execute the requested NetQMPI script.
@@ -81,6 +100,10 @@ def main():
     """
     
     parser = argparse.ArgumentParser(description="Run a NetQMPI Python code.")
+
+    parser.add_argument(
+        "--version", action=_VersionAction,
+        help="Show the NetQMPI release, git tag and commit, and exit")
     
     parser.add_argument(
         "-n", "--num-procs", 
