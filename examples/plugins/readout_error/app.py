@@ -38,3 +38,8 @@ def main(env: Environment = None):
         print(f"rank {comm.rank}: {counts}")
         print(f"  |0> read as 1 in {misread_0:.1%} of {shots} shots")
         print(f"  |1> read as 0 in {misread_1:.1%} of {shots} shots")
+        # What the plugin itself counted, every rank's measurements included.
+        plugin = comm.metrics.get("plugin")
+        if plugin:
+            print(f"  plugin: {plugin['flipped']} of {plugin['measurements']} "
+                  f"measurements misread")

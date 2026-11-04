@@ -65,15 +65,15 @@ gate.
 | `test_sdk_resources.py` | trace | — | 11 | The index pool: reuse, high-water mark, ordering |
 | `test_sdk_circuit_gates.py` | trace | — | 51 | The fluent gate API, index validation, the dispatch table |
 | `test_sdk_circuit_communication.py` | trace | — | 48 | `qsend`/`qrecv`, `qscatter`/`qgather`, `expose`/`unexpose` as recorded |
-| `test_sdk_communicator_environment.py` | trace | — | 13 | The user-facing facade: rank, size, neighbours, circuit registration |
+| `test_sdk_communicator_environment.py` | trace | — | 15 | The user-facing facade: rank, size, neighbours, circuit registration, empty `metrics` by default |
 | `test_runtime_config.py` | runtime | — | 17 | `RunConfig`, the YAML reader, per-backend blocks |
-| `test_runtime_cli.py` | runtime | — | 42 | `load_main`, backend selection, `--shots`/`--config`/`--plugin`/`--plugin-config`, `--list-plugins`, usage errors |
+| `test_runtime_cli.py` | runtime | — | 46 | `load_main`, backend selection, `--shots`/`--config`/`--plugin`/`--plugin-config`/`--metrics`, `--list-plugins`, usage errors |
 | `test_plugins.py` | runtime | — | 19 | Plugin discovery through entry points, `module:callable`, the optional `run_defaults`/`backends`/`configure` |
 | `test_aer_primitives.py` | execution | Qiskit Aer | 62 | Every gate and every primitive, run end to end |
 | `test_aer_transfers.py` | execution | Qiskit Aer | 13 | Cross-rank ordering regressions in the joint translation pass |
 | `test_examples.py` | execution | Qiskit Aer | 7 | The five shipped examples, against their documented output |
 | `test_netqasm_backend.py` | execution | SquidASM + NetSquid | 8 | The NetQASM adapter (marked `integration`) |
-| `test_netqasm_plugin.py` | execution | SquidASM + NetSquid | 31 | Simulation plugins on the NetQASM backend: precedence of `run_defaults`, `configure` before tracing, the two example plugins |
+| `test_netqasm_plugin.py` | execution | SquidASM + NetSquid | 41 | Simulation plugins on the NetQASM backend: precedence of `run_defaults`, `configure` before tracing, the two example plugins, and the metrics a run reports: what a plugin yields, simulated time per shot, `--metrics` |
 | `test_qoala_backend.py` | execution | qoala-sim + NetSquid | 9 | The Qoala adapter's gate table |
 
 ### Trace-level files
@@ -145,9 +145,12 @@ precedence of `--shots` over `--config`; and backend selection for **all** flags
 — including `--netqasm1.0` — by registering stub adapter modules under the
 adapter package names, so the branching is testable in an environment where the
 four backends cannot coexist. Usage errors (`-n 0`, two backend flags, a
-mistyped config key) must exit with status 2 and a message, not a traceback.
-So must a plugin flag given to a backend without plugins, which would otherwise
-run a plain simulation the user takes for the plugin's hardware.
+mistyped config key, a `--metrics` file in a directory that does not exist)
+must exit with status 2 and a message, not a traceback. So must a plugin flag
+given to a backend without plugins, which would otherwise run a plain simulation
+the user takes for the plugin's hardware. `--metrics` writes what the
+executor's `metrics()` returns as JSON, and `{}` with a note on stderr for a
+backend that reports none.
 
 `test_plugins.py` — how a plugin is found and what NetQMPI reads from it,
 backend-agnostic. Plugins come from a dummy distribution that the

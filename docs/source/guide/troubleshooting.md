@@ -71,6 +71,8 @@ but no `qraise` and no SLURM allocation.
 | Symptom | What is wrong |
 |---|---|
 | CUNQA's `ValueError: Not enough data qubits in the QPU for the circuit.`, naming no rank and no numbers | The circuit needs more qubits than the vQPU has — resize the [vQPU definition](../backends/cunqa.md#sizing-the-vqpus) |
+| NetQASM: `TypeError: Plugin '<module:callable>' yielded a <type>; ...`, before the simulation | The plugin's context manager yields something other than `None`, a mapping or an object with `report()` — see [Reporting metrics](../backends/netqasm-plugins.md#reporting-metrics) |
+| NetQASM: `RuntimeError: The simulation succeeded, but report() of plugin '<module:callable>' raised ...` | The plugin's `report()` failed; the chained traceback is the plugin's |
 
 ## Common situations
 
