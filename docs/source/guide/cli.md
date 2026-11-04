@@ -5,7 +5,7 @@ NetQMPI installs a single console entry point, `netqmpi`, defined in
 
 ```bash
 netqmpi -n <NUM_NODES> <script.py> [--cunqa | --netqasm | --aer | --qoala]
-        [--shots N] [--config config.yaml]
+        [--shots N] [--config config.yaml] [--metrics FILE]
 ```
 
 ## Arguments
@@ -33,6 +33,16 @@ netqmpi -n <NUM_NODES> <script.py> [--cunqa | --netqasm | --aer | --qoala]
 : Path to a YAML file with generic settings and an optional per-backend block.
   This replaces per-backend command-line flags — see
   [Configuration](configuration.md).
+
+`--metrics FILE`
+: Write the metrics of the run, what `comm.metrics` holds, to `FILE` as JSON
+  once the run has finished. Only the metrics are written, not the
+  configuration. Today only the [NetQASM backend](../backends/netqasm.md)
+  reports metrics: the simulated time of each shot and what a
+  [plugin](../backends/netqasm-plugins.md#reporting-metrics) reports. The other
+  backends write an empty object, `{}`, and say so on stderr, so a sweep over
+  backends always finds a file to read. A directory that does not exist is a
+  usage error, reported before the run. Nothing is written if the run fails.
 
 ## Examples
 
@@ -102,6 +112,9 @@ simulate(script="app.py", num_procs=3, executor=executor, timer=True)
 ```text
 finished simulation in 12.47 seconds
 ```
+
+After the run, `executor.metrics()` returns the metrics `--metrics` would
+write: an empty dict on a backend that reports none.
 
 The experiment drivers under
 [`scripts/experiments/`](https://github.com/NetQIR/netqmpi/tree/main/scripts/experiments)

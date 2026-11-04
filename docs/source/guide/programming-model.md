@@ -99,6 +99,10 @@ if comm.results:
         print(f"rank_{other}: {counts}")
 ```
 
+`comm.metrics`, next to it, holds what the run measured besides the outcomes,
+grouped by who measured it. It is empty unless the backend fills it, which
+today only the NetQASM backend does (see [Metrics](../backends/netqasm.md#metrics)).
+
 ## Tracing versus execution
 
 Understanding *when* things happen explains most of NetQMPI's error messages.

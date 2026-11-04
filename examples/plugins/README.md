@@ -10,7 +10,7 @@ test one.
 
 | Directory | Plugin | Replaces in SquidASM | Shows |
 |---|---|---|---|
-| [`readout_error/`](readout_error) | `readout_error:readout_error` | The executor (`SubroutineHandler._get_executor_class`) | Measurements report the wrong bit with probabilities `prob_error_0` and `prob_error_1` |
+| [`readout_error/`](readout_error) | `readout_error:readout_error` | The executor (`SubroutineHandler._get_executor_class`) | Measurements report the wrong bit with probabilities `prob_error_0` and `prob_error_1`; the plugin reports how many it misread in `comm.metrics["plugin"]` |
 | [`gate_noise/`](gate_noise) | `gate_noise:gate_noise` | The device (`squidasm.sim.network.network.QDevice`) | One- and two-qubit gates with their own depolarising noise and duration |
 
 Run each from its own directory, which is where its plugin is imported from:
@@ -19,6 +19,8 @@ Run each from its own directory, which is where its plugin is imported from:
 cd readout_error
 netqmpi -n 2 app.py --netqasm --config config.yaml   # with the plugin
 netqmpi -n 2 app.py --netqasm                        # without it, to compare
+netqmpi -n 2 app.py --netqasm --config config.yaml --metrics metrics.json
+                                                     # its metrics, as JSON
 ```
 
 Each directory holds:

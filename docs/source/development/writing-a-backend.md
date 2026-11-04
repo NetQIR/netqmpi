@@ -206,6 +206,15 @@ Two rules worth stating explicitly:
 **Reset class-level state after the last rank exits.** Adapters are reusable
 within the same process — the test suite and the experiment drivers rely on it.
 
+**Metrics are optional.** A backend that measures something besides the
+outcomes (simulated time, entanglement statistics) puts it in each
+communicator's `metrics` dict, grouped by producer (`comm.metrics["netqmpi"]`,
+`comm.metrics["plugin"]`), and overrides
+{meth}`Executor.metrics <netqmpi.runtime.executor.Executor.metrics>` to return
+those of the last run; that is what `--metrics FILE` writes. `run()` keeps
+returning `None`. A backend that measures nothing needs no change: the default
+returns `{}`. The NetQASM adapter is the example.
+
 ## 4. Register the flag
 
 Add a branch to {func}`netqmpi.runtime.cli.main`, with the import **inside** the
