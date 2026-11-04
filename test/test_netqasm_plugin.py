@@ -117,6 +117,210 @@ def test_the_plugin_is_active_during_the_simulation(tmp_path, monkeypatch):
     import recording_plugin
     assert recording_plugin.CALLS == [("enter", {"device": "anything"}),
                                       ("qdevice", 3), "exit"]
+    # It yields None, so it reports nothing; NetQMPI's own metrics remain.
+    metrics = executor.metrics()
+    assert "plugin" not in metrics
+    assert len(metrics["netqmpi"]["sim_time_ns"]) == 2
+
+
+# ---------------------------------------------------------------------------
+# Metrics: what a plugin reports, and the simulated time of each shot
+# ---------------------------------------------------------------------------
+
+#: Counts the pairs every link delivers, and reports them either through
+#: report() or as a mapping it fills, as ``plugin_config["style"]`` says.
+#: "fail" breaks the simulation instead, to show nothing is reported then.
+COUNTING_PLUGIN = """
+    import contextlib
+
+    from squidasm.sim.network import network
+
+    STATS = []
+
+    class LinkStats:
+        def __init__(self):
+            self.deliveries = 0
+            self.reports = 0
+
+        def report(self):
+            self.reports += 1
+            return {"epr_pairs": self.deliveries}
+
+    def counting(config):
+        return _counting(config.get("style", "report"))
+
+    @contextlib.contextmanager
+    def _counting(style):
+        stats = LinkStats()
+        STATS.append(stats)
+        filled = {"epr_pairs": 0}
+        original = network.NetSquidNetwork.__dict__["_create_link_distributor"]
+
+        def create(self, link, state_delay=1000):
+            if style == "fail":
+                raise RuntimeError("link down")
+            distributor = original(self, link, state_delay)
+            add_delivery = distributor.add_delivery
+
+            def counted(*args, **kwargs):
+                stats.deliveries += 1
+                filled["epr_pairs"] += 1
+                return add_delivery(*args, **kwargs)
+
+            distributor.add_delivery = counted
+            return distributor
+
+        network.NetSquidNetwork._create_link_distributor = create
+        try:
+            yield filled if style == "mapping" else stats
+        finally:
+            network.NetSquidNetwork._create_link_distributor = original
+"""
+
+#: Teleport |1> from rank 0 to rank 1: one pair per shot.
+TELEPORT_ONE = """
+    def main(env):
+        comm = env.comm
+        with comm:
+            circuit = env.create_circuit(num_qubits=1, num_clbits=1)
+            if comm.rank == 0:
+                circuit.x(0)
+                comm.qsend(circuit, [0], 1)
+            else:
+                comm.qrecv(circuit, [0], 0)
+                circuit.measure(0, 0)
+"""
+
+
+class _Report:
+    def __init__(self, report):
+        self._report = report
+
+    def report(self):
+        return self._report()
+
+
+def test_without_a_plugin_nothing_is_yielded():
+    with _simulation.plugin_context(NetQASMRunConfig()) as yielded:
+        assert yielded is None
+
+
+def test_a_plugin_yielding_something_else_is_refused_before_simulating(
+        tmp_path, monkeypatch):
+    (tmp_path / "odd_plugin.py").write_text(
+        "import contextlib\nwrap = lambda config: contextlib.nullcontext('stats')\n")
+    monkeypatch.chdir(tmp_path)
+    config = NetQASMRunConfig(plugin="odd_plugin:wrap")
+    with pytest.raises(TypeError, match=r"'odd_plugin:wrap' yielded a str"):
+        with _simulation.plugin_context(config):
+            pytest.fail("the simulation must not start")
+
+
+def test_plugin_metrics_copies_a_mapping_and_calls_report():
+    filled = {"epr_pairs": 3}
+    assert _simulation.plugin_metrics("p:q", None) is None
+    copied = _simulation.plugin_metrics("p:q", filled)
+    assert copied == filled and copied is not filled
+    assert _simulation.plugin_metrics("p:q", _Report(lambda: {"a": 1})) == {"a": 1}
+
+
+def test_an_error_in_report_names_the_plugin():
+    def broken():
+        raise KeyError("pair_rate")
+
+    with pytest.raises(RuntimeError, match=r"report\(\) of plugin 'p:q' raised "
+                                           r"KeyError") as error:
+        _simulation.plugin_metrics("p:q", _Report(broken))
+    assert isinstance(error.value.__cause__, KeyError)
+
+
+def test_a_report_that_is_not_a_mapping_is_refused():
+    with pytest.raises(TypeError, match=r"report\(\) of plugin 'p:q' returned a list"):
+        _simulation.plugin_metrics("p:q", _Report(lambda: [1, 2]))
+
+
+def test_a_shot_lasts_from_the_last_rank_ready_to_the_last_one_done():
+    rank_0 = [(100.0, 1100.0), (2000.0, 2500.0)]
+    rank_1 = [(150.0, 1300.0), (1900.0, 2400.0)]
+    assert _simulation.shot_times([rank_0, rank_1]) == [1150.0, 500.0]
+    # A program with no complete record (a shot that failed) gives no times.
+    assert _simulation.shot_times([rank_0, rank_1[:1]]) == []
+    assert _simulation.shot_times([]) == []
+
+
+def _run_counting(tmp_path, monkeypatch, style, shots=3):
+    """Run TELEPORT_ONE on two ranks with the counting plugin."""
+    (tmp_path / "counting_plugin.py").write_text(textwrap.dedent(COUNTING_PLUGIN))
+    (tmp_path / "app.py").write_text(textwrap.dedent(TELEPORT_ONE))
+    monkeypatch.chdir(tmp_path)
+
+    from netqmpi.sdk.environment import Environment
+    comms = []
+    original = Environment.__init__
+
+    def capture(self, comm, executor):
+        original(self, comm, executor)
+        comms.append(comm)
+
+    monkeypatch.setattr(Environment, "__init__", capture)
+    config = NetQASMRunConfig(shots=shots, netqasm_major=INSTALLED_MAJOR,
+                              plugin="counting_plugin:counting",
+                              plugin_config={"style": style})
+    executor = NetQASMExecutorAdapter(2, config)
+    executor.run(executor.build_apps(str(tmp_path / "app.py"), 2))
+    import counting_plugin
+    return executor, comms, counting_plugin.STATS[-1]
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("style", ["report", "mapping"])
+def test_what_the_plugin_yields_becomes_its_metrics(tmp_path, monkeypatch, style):
+    executor, comms, stats = _run_counting(tmp_path, monkeypatch, style)
+
+    last = comms[-1]
+    assert last.results == {"1": 3}             # the outcomes are untouched
+    assert last.metrics["plugin"] == {"epr_pairs": 3}
+    assert stats.reports == (1 if style == "report" else 0)
+    # The same metrics on every rank, and for the caller of run().
+    assert all(comm.metrics == last.metrics for comm in comms)
+    assert executor.metrics() == last.metrics
+
+    # One simulated time per shot, each at least the 1 us SquidASM's links
+    # take to deliver a pair.
+    times = last.metrics["netqmpi"]["sim_time_ns"]
+    assert len(times) == 3 and all(t >= 1000.0 for t in times), times
+
+
+@pytest.mark.integration
+def test_a_failed_simulation_reports_its_error_and_no_metrics(tmp_path, monkeypatch):
+    with pytest.raises(RuntimeError, match="link down"):
+        _run_counting(tmp_path, monkeypatch, "fail")
+
+    import counting_plugin
+    assert counting_plugin.STATS[-1].reports == 0
+
+
+@pytest.mark.integration
+def test_the_metrics_flag_writes_the_plugins_report(tmp_path, monkeypatch):
+    import json
+
+    from netqmpi.runtime import cli
+
+    (tmp_path / "counting_plugin.py").write_text(textwrap.dedent(COUNTING_PLUGIN))
+    (tmp_path / "app.py").write_text(textwrap.dedent(TELEPORT_ONE))
+    (tmp_path / "config.yaml").write_text(
+        "shots: 2\nnetqasm:\n  plugin: counting_plugin:counting\n")
+    monkeypatch.chdir(tmp_path)
+    flag = "--netqasm" if INSTALLED_MAJOR >= 2 else "--netqasm1.0"
+    monkeypatch.setattr("sys.argv", ["netqmpi", "-n", "2", "app.py", flag,
+                                     "--config", "config.yaml",
+                                     "--metrics", "metrics.json"])
+
+    cli.main()
+
+    metrics = json.loads((tmp_path / "metrics.json").read_text())
+    assert metrics["plugin"] == {"epr_pairs": 2}
+    assert len(metrics["netqmpi"]["sim_time_ns"]) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +383,8 @@ def test_readout_error_flips_every_outcome_at_probability_one(in_example, capsys
     output = _run_example("readout_error",
                           {"prob_error_0": 1.0, "prob_error_1": 1.0}, 4, capsys)
     assert "rank 0: {'01': 4}" in output, output
+    # Its metrics: two measurements a shot, all of them misread.
+    assert "plugin: 8 of 8 measurements misread" in output, output
 
 
 def test_gate_noise_refuses_an_unknown_key(in_example):
