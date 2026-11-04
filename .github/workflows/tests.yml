@@ -1,0 +1,74 @@
+# Run the test suite on pull requests and on pushes to main.
+#
+# Two jobs, split by what has to be installed:
+#
+# - core: NetQMPI alone (PyYAML and pytest). The SDK tests and the runtime
+#   tests with stub executors run; every backend test skips itself.
+# - aer: adds Qiskit and Qiskit Aer, so the Aer backend tests, the examples
+#   and the slow portability matrix run as well.
+#
+# NetQASM/SquidASM and Qoala need NetSquid, which sits behind a credentialed
+# private index, and CUNQA needs SLURM; neither exists on a public runner, so
+# the `integration` tests and those backends stay out. Qiskit and Aer are
+# pinned so that a new release cannot turn this check red on its own.
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history and tags: test_version runs `git describe --tags`.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: setup.py
+
+      - name: Install NetQMPI
+        run: |
+          python -m pip install --upgrade pip
+          # setuptools: test_version builds with `python setup.py build_py`,
+          # and Python 3.12 no longer ships it.
+          pip install -e '.[test]' setuptools
+
+      - name: Run the backend-independent tests
+        run: pytest -m "not integration and not slow"
+
+  aer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history and tags: test_version runs `git describe --tags`.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: setup.py
+
+      - name: Install NetQMPI with Qiskit Aer
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[test]' setuptools qiskit==2.6.1 qiskit-aer==0.17.2
+
+      - name: Run the tests, slow ones included
+        run: pytest -m "not integration"
