@@ -360,3 +360,71 @@ def test_a_missing_config_file_is_a_usage_error(tmp_path, fake_backends,
         cli.main()
     assert exit_info.value.code == 2
     assert "absent.yaml" in capsys.readouterr().err
+
+
+# ----------------------------------------------------------------------
+# --metrics
+# ----------------------------------------------------------------------
+
+class _Number:
+    """A value ``json`` cannot write as it is, like a NumPy integer."""
+
+    def item(self):
+        return 7
+
+
+def test_metrics_are_written_as_json(tmp_path, fake_backends, captured_run,
+                                     monkeypatch, capsys):
+    """Only the metrics go to the file, and values json cannot write are converted."""
+    import json
+
+    reported = {"netqmpi": {"sim_time_ns": [1500.0, 1600.0]},
+                "plugin": {"epr_pairs": _Number()}}
+    monkeypatch.setattr(FakeExecutor, "metrics", lambda self: reported,
+                        raising=False)
+    path = tmp_path / "metrics.json"
+
+    captured_run("-n", "2", write_app(tmp_path), "--netqasm",
+                 "--metrics", str(path))
+
+    assert json.loads(path.read_text()) == {
+        "netqmpi": {"sim_time_ns": [1500.0, 1600.0]},
+        "plugin": {"epr_pairs": 7}}
+    assert capsys.readouterr().err == ""
+
+
+def test_a_backend_without_metrics_writes_an_empty_object(tmp_path, fake_backends,
+                                                          captured_run,
+                                                          monkeypatch, capsys):
+    """The file is always written, so a sweep over backends finds it; stderr says why it is empty."""
+    import json
+
+    monkeypatch.setattr(FakeExecutor, "metrics", lambda self: {}, raising=False)
+    path = tmp_path / "metrics.json"
+
+    captured_run("-n", "2", write_app(tmp_path), "--aer", "--metrics", str(path))
+
+    assert json.loads(path.read_text()) == {}
+    assert "reported no metrics" in capsys.readouterr().err
+
+
+def test_without_the_flag_no_metrics_are_asked_for(tmp_path, fake_backends,
+                                                   captured_run, monkeypatch):
+    """An executor that has no metrics() at all still runs as before."""
+    monkeypatch.delattr(FakeExecutor, "metrics", raising=False)
+    call = captured_run("-n", "2", write_app(tmp_path), "--aer")
+    assert isinstance(call["executor"], FakeExecutor)
+
+
+def test_metrics_into_a_missing_directory_is_a_usage_error(tmp_path, fake_backends,
+                                                           monkeypatch, capsys):
+    """Refused before the run, not discovered after it."""
+    target = tmp_path / "absent" / "metrics.json"
+    monkeypatch.setattr("sys.argv", ["netqmpi", "-n", "2", write_app(tmp_path),
+                                     "--aer", "--metrics", str(target)])
+
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main()
+    assert exit_info.value.code == 2
+    err = capsys.readouterr().err
+    assert "--metrics" in err and "absent" in err

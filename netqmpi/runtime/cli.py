@@ -8,7 +8,10 @@ the corresponding adapter package.
 """
 
 import time, argparse
-from typing import Optional, Type, TypeVar
+import json
+import os
+import sys
+from typing import Any, Mapping, Optional, Type, TypeVar
 
 from netqmpi.runtime import Executor
 from netqmpi.runtime.run_config import RunConfig, read_config_block
@@ -71,6 +74,36 @@ def simulate(
 
     if timer:
         print(f"finished simulation in {round(time.perf_counter() - start, 2)} seconds")
+
+def _jsonable(value: Any) -> Any:
+    """Turn a value ``json`` cannot write (a NumPy number, say) into one it can."""
+    for method in ("tolist", "item"):
+        convert = getattr(value, method, None)
+        if callable(convert):
+            return convert()
+    return str(value)
+
+
+def write_metrics(path: str, metrics: Mapping[str, Any]) -> None:
+    """
+    Write the metrics of a run to a JSON file, for ``--metrics``.
+
+    Only the metrics are written, not the configuration of the run. A
+    backend that reports none gets an empty object and a note on stderr,
+    so that a sweep over backends always finds a file to read.
+
+    Args:
+        path: File to write; overwritten if it exists.
+        metrics: What :meth:`~netqmpi.runtime.executor.Executor.metrics`
+            returned.
+    """
+    with open(path, "w", encoding="utf-8") as stream:
+        json.dump(metrics, stream, indent=2, default=_jsonable)
+        stream.write("\n")
+    if not metrics:
+        print(f"netqmpi: this backend reported no metrics; wrote an empty "
+              f"object to {path}", file=sys.stderr)
+
 
 class _VersionAction(argparse.Action):
     """``--version``: print release, git tag and commit, then exit.
@@ -140,12 +173,26 @@ def main():
              "'hardware' qdevice section). Replaces per-backend parameter flags.",
     )
 
+    parser.add_argument(
+        "--metrics",
+        metavar="FILE",
+        default=None,
+        help="Write the metrics of the run (simulated time per shot, what a "
+             "plugin reports) to FILE as JSON. A backend that reports no "
+             "metrics writes an empty object.",
+    )
+
     # TODO: Turn ON and OFF the timer
 
     args = parser.parse_args()
 
     if args.num_procs < 1:
         parser.error("Number of processes must be at least 1")
+    if args.metrics is not None:
+        # Checked now, not after a run that may take hours.
+        directory = os.path.dirname(os.path.abspath(args.metrics))
+        if not os.path.isdir(directory):
+            parser.error(f"--metrics: directory {directory!r} does not exist")
 
     try:
         if args.netqasm or args.netqasm1:
@@ -186,6 +233,9 @@ def main():
         num_procs=args.num_procs,
         executor=executor
     )
+
+    if args.metrics is not None:
+        write_metrics(args.metrics, executor.metrics())
 
 if __name__ == "__main__":
     main()
