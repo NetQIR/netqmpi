@@ -41,7 +41,7 @@ SWAP.
 |---|:--:|:--:|:--:|:--:|
 | `qsend` / `qrecv` | ✅ | ✅ | ⚠️ SWAP-based | ✅ |
 | `qscatter` / `qgather` | ✅ | ⚠️ scatter only | ✅ | ❌ |
-| `expose` / `unexpose` | ✅ | ❌ | ✅ | ❌ |
+| `expose` / `unexpose` | ✅ | ✅ | ✅ | ❌ |
 | Controlled gates | ✅ | `cx`, `cz` | ✅ incl. phase family | `cx`, `cz` |
 | `reset` | ✅ | ❌ | ✅ | ❌ |
 | `barrier` | ❌ | ❌ | ✅ | ❌ |
@@ -72,7 +72,7 @@ What the probe programs of the benchmark (`test/apps` in this repository) are kn
 | `cascade` | ✅ up to n=256, q≤6 | ✅ up to n=128, q≤6 | ✅ q=1 up to n≈10 |
 | `ghz` | ✅ up to n=256 | ⚠️ fixed after 0.3.1, validate on the cluster | ⚠️ q=1 up to n=7, q=2 up to n=3 |
 | `qft` (teledata) | ✅ statevector-limited | ❌ needs controlled-P | ❌ needs controlled-P |
-| `qft_telegate` | ✅ statevector-limited | ❌ needs `expose` | ❌ needs `expose` |
+| `qft_telegate` | ✅ statevector-limited | ❌ needs `expose` | ❌ needs controlled-P |
 
 Two NetQASM limits of 0.3.1 are addressed after 0.3.1 but **not yet re-measured on
 the cluster**, so treat the table above as the proven ground:
@@ -88,7 +88,10 @@ the cluster**, so treat the table above as the proven ground:
 
 The portability matrix in `test/test_portability_matrix.py` (`pytest -m slow`)
 runs `cascade` and `ghz` at q ∈ {1, 2} and n ∈ {2, 4, 8, 12} on every installed
-backend, and is the way to re-establish this table.
+backend, and is the way to re-establish this table. At the same sizes it runs a
+telegate echo (`cx` and `cz` from an exposed control) on Aer and NetQASM, the
+portable stand-in for `qft_telegate`; on NetQASM only up to n=4 (see
+[testing](../development/testing.md#slow-tests)).
 
 (comm-results-shape)=
 ## The shape of `comm.results`

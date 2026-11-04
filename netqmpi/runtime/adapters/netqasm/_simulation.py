@@ -118,7 +118,9 @@ def check_capacity(network: NetworkConfig, roles: Dict[str, str],
     Refuse a run whose ranks need more qubits than their nodes have.
 
     A rank needs the most qubits it ever holds at once: its live data
-    qubits plus, during a transfer, the EPR half. SquidASM finds out only
+    qubits plus, during a transfer or while it opens an expose window, the
+    EPR half, plus a communication qubit for every expose window it is
+    receiving. SquidASM finds out only
     when the allocation fails inside the simulation, far from the program
     that caused it, and a run can hang rather than report it.
 
@@ -150,7 +152,9 @@ def check_capacity(network: NetworkConfig, roles: Dict[str, str],
             "The simulated network is too small for this program:\n"
             + "\n".join(short)
             + "\nA rank holds its live data qubits plus one EPR half while "
-            "it transfers. Raise 'num_qubits' in the netqasm block of the "
+            "it transfers or opens an expose window, and one communication "
+            "qubit for every expose window it receives while that window is "
+            "open. Raise 'num_qubits' in the netqasm block of the "
             "config file (NetQASMRunConfig.num_qubits; SquidASM's default is "
             "5), or the qubits of those nodes in the network YAML.")
 

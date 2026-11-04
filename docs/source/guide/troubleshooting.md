@@ -65,12 +65,20 @@ but no `qraise` and no SLURM allocation.
 | `NotImplementedError: Barrier is not implemented for the CUNQA backend.` | Operation the backend cannot express |
 | `RuntimeError: ... rank 0 sends qubit 0 to rank 1, which never receives it: rank 0 traced 1 qsend to rank 1, and rank 1 traced 0 qrecvs from rank 0` | `qsend` with no matching `qrecv` |
 | The same check as a count mismatch | Ranks disagree on the chunk size of a collective |
+| `ValueError: The simulated network is too small for this program: rank 1 needs 3 qubits at once, node 'rank_1' has 2` | NetQASM: a rank's live data qubits, EPR half and open windows' communication qubits do not fit in its node — raise `num_qubits` |
+
+The collective rows read the same on CUNQA and NetQASM, which both check the
+order of the `expose`/`unexpose` calls across ranks before running anything.
+Aer reports the same mistakes in its own words: `RuntimeError: The ranks blocked
+on calls that never match`, followed by what each rank is waiting for.
 
 ### Caught only at run time
 
 | Symptom | What is wrong |
 |---|---|
 | CUNQA's `ValueError: Not enough data qubits in the QPU for the circuit.`, naming no rank and no numbers | The circuit needs more qubits than the vQPU has — resize the [vQPU definition](../backends/cunqa.md#sizing-the-vqpus) |
+| NetQASM: `RuntimeError: rank 1 expected the 'unexpose expose_...' outcome from rank 0 but received ...` | Two ranks reached their transfers and telegate windows in different orders; the correction is refused rather than applied to the wrong call |
+| NetQASM: `RuntimeError: rank 1: communication qubit 1 (slot 0) holds no exposed control ...` | An exposed control was measured before its window closed |
 | NetQASM: `TypeError: Plugin '<module:callable>' yielded a <type>; ...`, before the simulation | The plugin's context manager yields something other than `None`, a mapping or an object with `report()` — see [Reporting metrics](../backends/netqasm-plugins.md#reporting-metrics) |
 | NetQASM: `RuntimeError: The simulation succeeded, but report() of plugin '<module:callable>' raised ...` | The plugin's `report()` failed; the chained traceback is the plugin's |
 
@@ -111,8 +119,8 @@ The portability matrix (`pytest -m slow`) does this for every case it runs.
 
 ### A gate seems to do nothing
 
-Some adapters ignore gate names they do not know instead of raising. A `swap` on
-NetQASM, or a `cs`/`ct`/`cp` on Aer, is dropped without warning. Check the
+Some adapters ignore gate names they do not know instead of raising. A
+`cs`/`ct`/`cp` on Aer is dropped without warning. Check the
 [backend support matrix](circuits.md#backend-support-matrix) before assuming the
 physics is wrong.
 
@@ -148,8 +156,10 @@ else:
 
 ### `AttributeError: 'ControlledGate' object has no attribute 'name'`
 
-Raised by the NetQASM adapter for any controlled gate. Controlled gates are not
-usable on that backend as it stands; use CUNQA or Aer.
+Raised by the NetQASM adapter for any controlled gate in 0.3.1 and earlier. It
+now emits `cx` and `cz`, locally and from an exposed control, and raises
+`NotImplementedError` for every other controlled gate; use CUNQA or Aer for
+those.
 
 ### CUNQA says there are no vQPUs
 

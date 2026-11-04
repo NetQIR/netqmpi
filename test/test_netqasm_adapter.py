@@ -351,3 +351,239 @@ def test_stop_backend_stops_whatever_squidasm_left_running(monkeypatch):
     from netqmpi.runtime.adapters.netqasm._simulation import stop_backend
     stop_backend()
     assert stopped.is_set()
+
+
+# ----------------------------------------------------------------------
+# Telegate windows: expose / unexpose
+# ----------------------------------------------------------------------
+
+FREQUENT_ERRORS = REPO_ROOT / "examples" / "frequent_errors"
+
+
+def write_app(tmp_path: Path, source: str) -> Path:
+    """Write an app module to ``tmp_path`` and return its path."""
+    app = tmp_path / "app.py"
+    app.write_text(textwrap.dedent(source))
+    return app
+
+
+#: Rank 0 lends its qubit to every other rank, each of which uses it as the
+#: control of a local CNOT. Each receiver holds two live data qubits when
+#: the window opens; the root holds one.
+WIDE_WINDOW = """
+    from netqmpi.sdk.environment import Environment
+
+    def main(env: Environment = None):
+        comm, rank, size = env.comm, env.comm.rank, env.comm.size
+        receivers = list(range(1, size))
+        with comm:
+            circuit = env.create_circuit(num_qubits=2, num_clbits=2)
+            if rank == 0:
+                circuit.x(0)
+            else:
+                circuit.x(0)
+                circuit.x(1)
+            handle = comm.expose(circuit, 0, receivers, root=0)
+            if rank != 0:
+                circuit.cx(handle, 0)
+                circuit.cx(handle, 1)
+            comm.unexpose(circuit, receivers, root=0)
+            circuit.measure(0, 0)
+            circuit.measure(1, 1)
+"""
+
+#: Two windows over different groups, one open across the other: the shape
+#: of ``examples/5_qft_expose.py``, with CNOTs instead of controlled phases.
+NESTED_WINDOWS = """
+    from netqmpi.sdk.environment import Environment
+
+    def main(env: Environment = None):
+        comm, rank = env.comm, env.comm.rank
+        with comm:
+            circuit = env.create_circuit(num_qubits=1, num_clbits=1)
+            outer = comm.expose(circuit, 0, [0, 1], root=2)
+            inner = comm.expose(circuit, 0, [0], root=1)
+            if rank == 0:
+                circuit.cx(inner, 0)
+                circuit.cx(outer, 0)
+            comm.unexpose(circuit, [0], root=1)
+            if rank == 1:
+                circuit.cx(outer, 0)
+            comm.unexpose(circuit, [0, 1], root=2)
+            circuit.measure(0, 0)
+"""
+
+#: ``examples/frequent_errors/partial_expose_group.py`` with a CNOT instead
+#: of a controlled-S, which NetQASM cannot express and would report first.
+PARTIAL_GROUP = """
+    from netqmpi.sdk.environment import Environment
+
+    def main(env: Environment = None):
+        comm, rank = env.comm, env.comm.rank
+        with comm:
+            circuit = env.create_circuit(num_qubits=1, num_clbits=1)
+            if rank != 2:
+                control = comm.expose(circuit, 0, [1, 2], root=0)
+                if rank == 1:
+                    circuit.cx(control, 0)
+                comm.unexpose(circuit, [1, 2], root=0)
+            circuit.measure(0, 0)
+"""
+
+
+@pytest.mark.parametrize("ranks", [2, 3, 5])
+def test_a_telegate_window_reaches_the_simulation(ranks, simulation,
+                                                  monkeypatch, tmp_path):
+    """expose and unexpose translate instead of raising NotImplementedError."""
+    run(write_app(tmp_path, WIDE_WINDOW), ranks, monkeypatch)
+    assert len(simulation.calls) == 1
+
+
+def test_epr_sockets_follow_a_telegate_star(simulation, monkeypatch, tmp_path):
+    """The root talks to every receiver; a receiver only to the root."""
+    run(write_app(tmp_path, WIDE_WINDOW), 4, monkeypatch)
+    assert simulation.epr_peers[0] == {0: [1, 2, 3], 1: [0], 2: [0], 3: [0]}
+
+
+def test_epr_sockets_follow_nested_windows(simulation, monkeypatch, tmp_path):
+    """Each window adds its own root-receiver pairs, and only those."""
+    run(write_app(tmp_path, NESTED_WINDOWS), 3, monkeypatch)
+    assert simulation.epr_peers[0] == {0: [1, 2], 1: [0, 2], 2: [0, 1]}
+
+
+def test_peak_qubits_count_the_window(simulation, monkeypatch, tmp_path):
+    """
+    A receiver holds its comm qubit for the whole window, the root one EPR
+    half at a time.
+
+    The root holds its data qubit plus the EPR half it is measuring: 2. A
+    receiver holds two data qubits plus the comm qubit: 3, not 2.
+    """
+    run(write_app(tmp_path, WIDE_WINDOW), 3, monkeypatch)
+    assert simulation.peaks[0] == {0: 2, 1: 3, 2: 3}
+
+
+def test_peak_qubits_of_nested_windows(simulation, monkeypatch, tmp_path):
+    """Rank 0 receives two controls at once: its data qubit plus two comm."""
+    run(write_app(tmp_path, NESTED_WINDOWS), 3, monkeypatch)
+    # Rank 1 is a receiver of the outer window (comm qubit) and root of the
+    # inner one (data qubit plus a transient EPR half).
+    assert simulation.peaks[0] == {0: 3, 1: 3, 2: 2}
+
+
+def test_a_window_that_does_not_fit_is_refused(simulation, monkeypatch,
+                                               tmp_path):
+    """The comm qubit counts: two live data qubits do not leave room for it."""
+    with pytest.raises(ValueError,
+                       match=r"rank 1 needs 3 qubits at once, node 'rank_1' has 2"):
+        run(write_app(tmp_path, WIDE_WINDOW), 3, monkeypatch, num_qubits=2)
+    assert simulation.calls == []
+
+
+def test_a_lonely_expose_is_reported(simulation, monkeypatch):
+    """Only the root reaches the window: a deadlock report, not a hang."""
+    with pytest.raises(RuntimeError, match="Deadlock") as error:
+        run(FREQUENT_ERRORS / "lonely_expose.py", 2, monkeypatch)
+    message = str(error.value)
+    assert "expose(ranks=[0], root=1)" in message
+    assert "called by:  rank 1" in message
+    assert "missing:    rank 0, which finished its block without calling it" in message
+    assert simulation.calls == []
+    assert NetQASMCommunicator.communicators == []
+
+
+def test_crossed_windows_are_reported(simulation, monkeypatch):
+    """Each rank waits on its own window: named as caller and as missing."""
+    with pytest.raises(RuntimeError, match="Deadlock") as error:
+        run(FREQUENT_ERRORS / "crossed_expose.py", 2, monkeypatch)
+    message = str(error.value)
+    assert "missing:    rank 1, which is waiting on expose(ranks=[0], root=1)" in message
+    assert "missing:    rank 0, which is waiting on expose(ranks=[1], root=0)" in message
+    assert "same order" in message
+    assert simulation.calls == []
+
+
+def test_a_partial_group_is_reported(simulation, monkeypatch, tmp_path):
+    """Two of three participants arrive; the third is named as missing."""
+    with pytest.raises(RuntimeError, match="Deadlock") as error:
+        run(write_app(tmp_path, PARTIAL_GROUP), 3, monkeypatch)
+    message = str(error.value)
+    assert "called by:  rank 0, rank 1" in message
+    assert "missing:    rank 2, which finished its block without calling it" in message
+    assert simulation.calls == []
+
+
+def test_a_window_naming_a_rank_outside_the_run_is_reported(simulation,
+                                                            monkeypatch):
+    """Rank 7 cannot answer in a 2-rank run; say so before opening sockets."""
+    with pytest.raises(RuntimeError, match="names rank 7") as error:
+        run(FREQUENT_ERRORS / "expose_outside_group.py", 2, monkeypatch)
+    assert "this run has 2 ranks, numbered 0 to 1" in str(error.value)
+    assert simulation.calls == []
+
+
+def test_a_rejected_window_leaves_the_adapter_reusable(simulation, monkeypatch,
+                                                       tmp_path):
+    """After a refused run, the next one in the same process starts clean."""
+    with pytest.raises(RuntimeError, match="Deadlock"):
+        run(FREQUENT_ERRORS / "crossed_expose.py", 2, monkeypatch)
+    run(write_app(tmp_path, NESTED_WINDOWS), 3, monkeypatch)
+    assert len(simulation.calls) == 1
+
+
+def test_the_partial_group_example_reports_its_gate_first(simulation,
+                                                          monkeypatch):
+    """
+    Its controlled-S is refused while rank 1 translates, before the check.
+
+    Documented in examples/frequent_errors/README.md as the one expose
+    example whose NetQASM error differs from CUNQA's.
+    """
+    with pytest.raises(NotImplementedError,
+                       match="Controlled-S is not implemented for the NetQASM"):
+        run(FREQUENT_ERRORS / "partial_expose_group.py", 3, monkeypatch)
+    assert simulation.calls == []
+
+
+class _Comm:
+    """Just the rank, for the adapter's error messages."""
+    rank = 1
+
+
+class _Socket:
+    """Hands out one structured message."""
+
+    def __init__(self, header, payload):
+        from netqasm.sdk.classical_communication.message import StructuredMessage
+        self.message = StructuredMessage(header, payload)
+
+    def recv_structured(self):
+        return self.message
+
+
+def _bare_adapter():
+    from netqmpi.runtime.adapters.netqasm import NetQASMCircuitAdapter
+    adapter = NetQASMCircuitAdapter.__new__(NetQASMCircuitAdapter)
+    adapter._comm = _Comm()
+    adapter._num_qubits = 1
+    adapter._qubits = [None, None]           # one data qubit, one comm slot
+    return adapter
+
+
+def test_a_telegate_message_for_another_call_is_refused():
+    """A correction from a different call raises instead of being applied."""
+    adapter = _bare_adapter()
+    assert adapter._receive(_Socket("expose t", 1), "expose t", 0) == 1
+    with pytest.raises(RuntimeError, match=r"rank 1 expected the 'expose t' "
+                                           r"outcome from rank 0 but received "
+                                           r"'Corrections'"):
+        adapter._receive(_Socket("Corrections", [0, 1]), "expose t", 0)
+
+
+def test_an_empty_comm_qubit_is_not_silently_reallocated():
+    """A comm slot with no control raises rather than becoming a fresh |0>."""
+    adapter = _bare_adapter()
+    with pytest.raises(RuntimeError,
+                       match=r"communication qubit 1 \(slot 0\) holds no "
+                             r"exposed control"):
+        adapter._qubit(1)
