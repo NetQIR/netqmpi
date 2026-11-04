@@ -50,7 +50,8 @@ def readout_error(config: Mapping[str, Any]):
             each a probability in [0, 1] that defaults to 0.
 
     Returns:
-        A context manager under which SquidASM measures with readout error.
+        A context manager under which SquidASM measures with readout error,
+        and which reports how many measurements it misread.
 
     Raises:
         ValueError: On an unknown key or a value that is not a probability.
@@ -86,24 +87,33 @@ readout_error.backends = ("netqasm",)
 
 
 @contextmanager
-def _readout_error(prob_error_0: float, prob_error_1: float) -> Iterator[None]:
+def _readout_error(prob_error_0: float,
+                   prob_error_1: float) -> Iterator[Dict[str, int]]:
     """
     Make SquidASM's vanilla executor misread measurements while active.
 
     Args:
         prob_error_0: Probability that an outcome 0 is reported as 1.
         prob_error_1: Probability that an outcome 1 is reported as 0.
+
+    Yields:
+        The plugin's metrics, filled during the run: ``measurements``, every
+        measurement the nodes made, and ``flipped``, those misread. NetQMPI
+        hands them to the program as ``comm.metrics["plugin"]``.
     """
+    stats = {"measurements": 0, "flipped": 0}
 
     class ReadoutErrorExecutor(VanillaNetSquidExecutor):
         """SquidASM's executor for generic hardware, with readout error."""
 
         def _meas_physical_qubit(self, position):
             outcome = yield from super()._meas_physical_qubit(position)
+            stats["measurements"] += 1
             flip = prob_error_0 if outcome == 0 else prob_error_1
             # NetSquid's random state, so that ns.set_random_state(seed)
             # makes a run with readout error reproducible too.
             if flip and get_random_state().random_sample() < flip:
+                stats["flipped"] += 1
                 return 1 - outcome
             return outcome
 
@@ -118,6 +128,6 @@ def _readout_error(prob_error_0: float, prob_error_1: float) -> Iterator[None]:
 
     SubroutineHandler._get_executor_class = classmethod(executor_class)
     try:
-        yield
+        yield stats
     finally:
         SubroutineHandler._get_executor_class = original

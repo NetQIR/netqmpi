@@ -144,7 +144,7 @@ when the trace is complete, and reserves exactly that much.
 
 ## Where the abstraction leaks
 
-Three places, all documented rather than hidden:
+Four places, all documented rather than hidden:
 
 1. **`comm.results` differs per backend** — keyed by rank on CUNQA, a single
    global histogram on Aer, this rank's own on Qoala and NetQASM. See
@@ -155,3 +155,7 @@ Three places, all documented rather than hidden:
 3. **Not every backend implements every operation.** The SDK accepts everything
    at trace time; unsupported operations surface at translation time. See the
    [support matrix](../guide/circuits.md#backend-support-matrix).
+4. **`comm.metrics` is filled by one backend.** Every communicator has it, but
+   only NetQASM reports metrics (simulated time per shot, and what a plugin
+   reports); elsewhere it stays empty and `--metrics` writes `{}`. See
+   [Metrics](../backends/netqasm.md#metrics).

@@ -79,6 +79,8 @@ on calls that never match`, followed by what each rank is waiting for.
 | CUNQA's `ValueError: Not enough data qubits in the QPU for the circuit.`, naming no rank and no numbers | The circuit needs more qubits than the vQPU has — resize the [vQPU definition](../backends/cunqa.md#sizing-the-vqpus) |
 | NetQASM: `RuntimeError: rank 1 expected the 'unexpose expose_...' outcome from rank 0 but received ...` | Two ranks reached their transfers and telegate windows in different orders; the correction is refused rather than applied to the wrong call |
 | NetQASM: `RuntimeError: rank 1: communication qubit 1 (slot 0) holds no exposed control ...` | An exposed control was measured before its window closed |
+| NetQASM: `TypeError: Plugin '<module:callable>' yielded a <type>; ...`, before the simulation | The plugin's context manager yields something other than `None`, a mapping or an object with `report()` — see [Reporting metrics](../backends/netqasm-plugins.md#reporting-metrics) |
+| NetQASM: `RuntimeError: The simulation succeeded, but report() of plugin '<module:callable>' raised ...` | The plugin's `report()` failed; the chained traceback is the plugin's |
 
 ## Common situations
 

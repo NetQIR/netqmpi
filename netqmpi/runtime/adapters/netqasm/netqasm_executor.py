@@ -12,7 +12,7 @@ from ``netqasm.*``.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Mapping, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from netqasm.runtime.app_config import AppConfig
 from netqasm.util.yaml import load_yaml
@@ -70,10 +70,12 @@ class NetQASMRunConfig(RunConfig):
             group), or ``"module:callable"``, imported as ``python -m``
             would, the working directory first. The callable is given
             ``plugin_config`` and returns a context manager, entered around
-            the simulation and exited after it. Its optional members are
-            honoured as :class:`netqmpi.plugins.Plugin` describes:
-            ``run_defaults`` by :meth:`from_dict`, ``backends`` and
-            ``configure`` when the config is built.
+            the simulation and exited after it. What the context manager
+            yields, a mapping or an object with ``report()``, becomes
+            ``comm.metrics["plugin"]``. Its optional members are honoured as
+            :class:`netqmpi.plugins.Plugin` describes: ``run_defaults`` by
+            :meth:`from_dict`, ``backends`` and ``configure`` when the config
+            is built.
         plugin_config: Mapping handed to ``plugin`` untouched; NetQMPI does
             not read it.
         network_config: Path to a NetQASM network YAML describing the
@@ -214,6 +216,8 @@ class NetQASMExecutorAdapter(Executor):
         config = config or NetQASMRunConfig()
         require_major(config.netqasm_major)
         super().__init__(size, config)
+        # The communicators of the last run, where its metrics end up.
+        self._communicators: List[NetQASMCommunicator] = []
 
     # ------------------------------------------------------------------
     # Executor interface — circuit factory
@@ -261,7 +265,9 @@ class NetQASMExecutorAdapter(Executor):
             A wrapped callable compatible with the NetQASM runtime.
         """
         def wrapped_main():
-            env = Environment(NetQASMCommunicator(rank, size, self._config), self)
+            comm = NetQASMCommunicator(rank, size, self._config)
+            self._communicators.append(comm)
+            env = Environment(comm, self)
             main_func(env=env)
             
         return wrapped_main
@@ -319,6 +325,24 @@ class NetQASMExecutorAdapter(Executor):
         # A previous run that failed part-way leaves its programs on the
         # class; starting from them would silently mix two runs together.
         NetQASMCommunicator.reset_run()
+        self._communicators = []
 
         for app in apps:
             app()
+
+    def metrics(self) -> Dict[str, Any]:
+        """
+        Return the metrics of the last run.
+
+        Every rank's ``comm.metrics`` holds the same metrics, but only the
+        last rank's ``main`` is still running when they arrive; this is how
+        the caller of :meth:`run` reads them.
+
+        Returns:
+            ``"netqmpi"``: ``sim_time_ns``, the simulated time of each shot;
+            ``"plugin"``: what the plugin reported, if it reports anything.
+            Empty before a run or after a failed one.
+        """
+        if not self._communicators:
+            return {}
+        return dict(self._communicators[-1].metrics)

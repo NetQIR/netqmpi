@@ -129,7 +129,8 @@ def _active(params):
 
 Between entering and exiting, SquidASM builds the network and simulates every
 shot of the run. Whatever the plugin has replaced is what SquidASM uses to do
-so.
+so. What the context manager yields is how the plugin reports what it observed;
+`None` reports nothing (see [Reporting metrics](#reporting-metrics)).
 
 ### Optional members
 
@@ -194,6 +195,7 @@ a plugin does not need to inherit from it.
 | The last rank leaves its `with comm:` block | Calls the plugin with `plugin_config` and enters the context manager it returns |
 | Inside the context | SquidASM builds the network and simulates all the shots of the run |
 | The simulation returns or raises | Exits the context manager |
+| The simulation returned | Reads what the context manager yielded into `comm.metrics["plugin"]` (see [Reporting metrics](#reporting-metrics)) |
 
 The plugin is called once per run, and its context manager is entered once,
 around all the shots, after every rank has been traced. Validate the parameters
@@ -242,6 +244,75 @@ def _slow_links(pair_interval):
     finally:
         network.NetSquidNetwork._create_link_distributor = original
 ```
+
+### Reporting metrics
+
+When a plugin is used to characterise nodes and links, the histogram in
+`comm.results` is rarely what matters: the number of pairs a link delivered,
+their fidelity or how long the program took are. A plugin reports such
+quantities through **what its context manager yields**:
+
+- `None`, as plugins that report nothing do: nothing is added.
+- A **mapping** that the plugin fills during the run.
+- An object with a **`report()`** method returning a mapping, which NetQMPI
+  calls once, after the simulation.
+
+```python
+@contextmanager
+def _active(params):
+    stats = LinkStats()          # filled by the distributor during the run
+    ...                          # replace what SquidASM uses
+    try:
+        yield stats              # -> comm.metrics["plugin"] = stats.report()
+    finally:
+        ...                      # put the original back
+```
+
+Anything else is refused when the context is entered, before the simulation.
+The mapping is read, or `report()` called, only once the simulation has
+returned and the context has exited: a failed run reports its error, never
+metrics. An exception in `report()` fails the run with an error naming the
+plugin.
+
+The metrics are a mapping on the communicator, `comm.metrics`, grouped by who
+produced them:
+
+| Entry | Holds |
+|---|---|
+| `comm.metrics["plugin"]` | A copy of what the plugin reported |
+| `comm.metrics["netqmpi"]["sim_time_ns"]` | NetQMPI's own: the simulated time of each shot, in ns, in shot order |
+
+`comm.metrics` exists on every backend and is empty unless the backend fills
+it. On this backend it is filled at the same moment as `comm.results`, when the
+last rank leaves `with comm:`, so only the last rank sees it inside `main`.
+Every rank's communicator then holds the same metrics, which describe the run
+rather than a rank. `--metrics FILE` writes them to a JSON file (see
+[Command-line interface](../guide/cli.md)), and `executor.metrics()` returns
+them to a caller in Python.
+
+**Key names.** So that the reports of different plugins can be compared, use
+these names when a plugin measures the quantity they describe. None of them is
+required:
+
+| Key | Meaning |
+|---|---|
+| `sim_time_ns` | Simulated time, in ns |
+| `epr_pairs` | EPR pairs delivered |
+| `epr_attempts` | Attempts made to deliver them |
+| `pair_fidelity` | Fidelity of the delivered pairs |
+
+**The simulated time of a shot** runs from the moment the last rank has its
+connection and EPR sockets ready to the moment the last rank finishes, its
+final instructions flushed. It starts there, rather than at the start of
+SquidASM's round, because SquidASM sets the sockets up in wall-clock time while
+the simulated clock runs on. Local work that a rank does before the last rank is
+ready is therefore not counted. The value still depends on how the
+operating system schedules the threads that SquidASM runs the ranks in, one per
+rank, because the simulated clock does not wait for them. Expect shots of the
+same program to differ, by a factor of three in this case:
+`examples/2_round_robin.py` on four ranks gave shots between 1.0 and 3.5 ms
+over three runs of four shots. Compare distributions over many shots rather than single
+values.
 
 ### Guidelines
 
@@ -339,13 +410,27 @@ than `10` is a readout error:
 
 ```text
 $ netqmpi -n 2 app.py --netqasm --config config.yaml
-rank 1: {'01': 2, '10': 144, '00': 43, '11': 11}
-  |0> read as 1 in 6.5% of 200 shots
-  |1> read as 0 in 22.5% of 200 shots
+rank 1: {'00': 36, '10': 157, '11': 6, '01': 1}
+  |0> read as 1 in 3.5% of 200 shots
+  |1> read as 0 in 18.5% of 200 shots
+  plugin: 85 of 800 measurements misread
 ```
 
 against `prob_error_0: 0.05` and `prob_error_1: 0.20`; without the plugin every
 shot reads `10`.
+
+The plugin also [reports a metric](#reporting-metrics): it yields a mapping
+that it fills as it measures, so the program reads in `comm.metrics["plugin"]`
+how many measurements it made, every rank's included (two ranks, two qubits,
+200 shots), and how many it misread:
+
+```{literalinclude} ../../../examples/plugins/readout_error/app.py
+:language: python
+:start-at: "# What the plugin itself counted"
+```
+
+`--metrics metrics.json` writes the same numbers, with the simulated time of
+each shot, to a file.
 
 ### Noise per gate type: replacing the device
 
@@ -406,7 +491,8 @@ both examples:
 
   Choosing parameters at their limits, such as probabilities of 0 or 1, makes
   the expected outcome deterministic, so the test does not depend on
-  statistics.
+  statistics. After the run, `executor.metrics()["plugin"]` is what the
+  plugin reported, so its metrics can be checked the same way.
 
 ## Errors
 
@@ -425,6 +511,9 @@ both examples:
 | `plugin_config must be a mapping of parameters` | `plugin_config` is a list or a single value |
 | `--plugin-config FILE must contain a mapping of parameters` | The file of `--plugin-config` is a list or a single value |
 | `--plugin is not supported by the ... backend` | `--plugin` or `--plugin-config` with `--aer`, `--cunqa` or `--qoala` |
+| `Plugin ... yielded a ...; a plugin's context manager must yield None, a mapping of metrics, or an object with a report() method returning one` | The context manager yields something NetQMPI cannot read metrics from; raised before the simulation |
+| `The simulation succeeded, but report() of plugin ... raised ...` | The plugin's `report()` failed after a successful run; its error is chained |
+| `report() of plugin ... returned a ..., not a mapping of metrics` | `report()` returned a list or a single value |
 
 Errors in `plugin_config` itself are the plugin's to report, from its
 `configure` before the program is traced, or when NetQMPI calls it just before

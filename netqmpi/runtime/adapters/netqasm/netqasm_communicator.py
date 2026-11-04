@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 import importlib
-from typing import Any, List, Dict, Optional, Set, TYPE_CHECKING
+from typing import Any, List, Dict, Optional, Set, Tuple, TYPE_CHECKING
 
 from netqasm.sdk import EPRSocket, Qubit
 from netqasm.sdk.external import NetQASMConnection, Socket
@@ -92,6 +92,9 @@ class NetQASMCommunicator(QMPICommunicator):
         self._sockets: Dict[int, Socket] = {}
         # Ranks the traced program talks to; filled in by __exit__.
         self._peers: Optional[Set[int]] = None
+        # Per program of this rank, the simulated (start, end) of each shot;
+        # filled in by the programs __exit__ builds.
+        self._spans: List[List[Tuple[float, float]]] = []
 
         self._config = config
         NetQASMCommunicator.communicators.append(self)
@@ -161,10 +164,13 @@ class NetQASMCommunicator(QMPICommunicator):
             # already died rather than reporting the gate.
             circuit.translate(circuit.ops)
 
+            spans: List[Tuple[float, float]] = []
+            self._spans.append(spans)
+
             # ``circuit`` is bound as a default argument: without it every
             # program built by this loop would close over the last circuit
             # of the rank rather than its own.
-            def entry(app_config=None, circuit=circuit):
+            def entry(app_config=None, circuit=circuit, spans=spans):
                 # One call per shot. The qubits of the previous shot were
                 # consumed with it, so the slots start empty and are filled
                 # again on first use; keeping them would hand this shot
@@ -178,6 +184,12 @@ class NetQASMCommunicator(QMPICommunicator):
                     epr_sockets=self._epr_sockets_list,
                 )
                 self._connection.__enter__()
+                # The shot is timed from here, once the connection and its
+                # EPR sockets are set up, not from the start of SquidASM's
+                # round: setting them up waits in wall-clock time, during
+                # which simulated time runs on for reasons of thread
+                # scheduling rather than of the program.
+                start = _simulation.sim_time()
 
                 # One bit string per shot, unmeasured bits reading 0, most
                 # significant first — the shape every other backend returns.
@@ -202,6 +214,10 @@ class NetQASMCommunicator(QMPICommunicator):
                 self.results[key] = self.results.get(key, 0) + 1
 
                 self._connection.__exit__(exc_type, exc_val, exc_tb)
+                # After the exit, which flushes what is left of the program.
+                end = _simulation.sim_time()
+                if start is not None and end is not None:
+                    spans.append((start, end))
 
             NetQASMCommunicator.netqasm_circuits.append(
                 Program(party=f"rank_{self.rank}", entry=entry, args=[], results=[])
@@ -247,7 +263,9 @@ class NetQASMCommunicator(QMPICommunicator):
         Run every rank's program through SquidASM, once per shot.
 
         Called by the last rank to leave its block, once every rank's
-        program is registered.
+        program is registered. On success, fills every rank's ``metrics``
+        with the simulated time of each shot (``"netqmpi"``) and what the
+        plugin reports (``"plugin"``), when there is any.
 
         Args:
             argv_per_rank: Program inputs, one mutable mapping per party.
@@ -259,6 +277,11 @@ class NetQASMCommunicator(QMPICommunicator):
             Exception: Whatever a rank's program raised during the
                 simulation. The SquidASM backend is stopped first, so the
                 process can still exit and run again.
+            RuntimeError: If the plugin's ``report()`` raises after a
+                successful simulation.
+            TypeError: If the plugin yields, or reports, something other
+                than metrics (see
+                :func:`~netqmpi.runtime.adapters.netqasm._simulation.plugin_metrics`).
         """
         programs = NetQASMCommunicator.netqasm_circuits
         roles = netqasm_env.load_roles_config(self._config.roles)
@@ -306,7 +329,7 @@ class NetQASMCommunicator(QMPICommunicator):
 
         with _simulation.squidasm_patches(self._config.epr_setup_timeout,
                                           self._config.poll_interval), \
-                _simulation.plugin_context(self._config):
+                _simulation.plugin_context(self._config) as plugin:
             try:
                 simulate_application(
                     app_instance=app_instance,
@@ -322,6 +345,21 @@ class NetQASMCommunicator(QMPICommunicator):
             except BaseException:
                 _simulation.stop_backend()
                 raise
+
+        # Only once the simulation has succeeded: a failed run reports the
+        # error, not metrics. Every rank gets the same metrics, as they
+        # describe the run rather than a rank.
+        metrics: Dict[str, Any] = {}
+        times = _simulation.shot_times(
+            spans for comm in NetQASMCommunicator.communicators
+            for spans in comm._spans)
+        if times:
+            metrics["netqmpi"] = {"sim_time_ns": times}
+        reported = _simulation.plugin_metrics(self._config.plugin, plugin)
+        if reported is not None:
+            metrics["plugin"] = reported
+        for comm in NetQASMCommunicator.communicators:
+            comm.metrics.update(metrics)
 
         if self._config.enable_logging and log_cfg is not None:
             create_app_instr_logs(log_cfg.log_subroutines_dir)

@@ -47,6 +47,28 @@ def test_rank_and_size_are_what_the_runtime_assigned():
     assert comm.circuits == [] and comm.results == {}
 
 
+def test_metrics_start_empty_and_belong_to_one_communicator():
+    """
+    ``comm.metrics`` is there on every backend, empty unless one fills it.
+
+    One dict per communicator, never a class-level one: adapters run
+    several times in one process, and a shared default would carry one
+    run's metrics into the next.
+    """
+    first, second = StubCommunicator(rank=0, size=2), StubCommunicator(rank=1, size=2)
+    assert first.metrics == {} and second.metrics == {}
+
+    first.metrics["netqmpi"] = {"sim_time_ns": [1.0]}
+    assert second.metrics == {}
+
+
+def test_an_executor_without_metrics_reports_none():
+    """The default every backend without metrics inherits."""
+    executor = StubExecutor(size=2)
+    executor.run(executor.build_apps("app.py", 2))
+    assert executor.metrics() == {}
+
+
 def test_neighbours_wrap_around_the_ring():
     """``2_round_robin`` relies on this closing the loop."""
     comm = StubCommunicator(rank=0, size=3)

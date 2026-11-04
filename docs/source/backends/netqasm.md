@@ -334,6 +334,24 @@ bit string per shot, most significant bit first, with unmeasured bits reading
 
 Unlike CUNQA, it is not keyed by rank and does not carry the other ranks' counts.
 
+## Metrics
+
+This is the one backend that fills `comm.metrics`, at the same moment as
+`comm.results`. The mapping holds the same values on every rank, because they
+describe the run as a whole:
+
+```python
+{'netqmpi': {'sim_time_ns': [204357.0, 203195.0, ...]},   # one per shot
+ 'plugin': {'measurements': 800, 'flipped': 85}}           # if a plugin reports
+```
+
+`sim_time_ns` is the simulated time of each shot, in ns, counted from the moment
+every rank has its connection and EPR sockets ready. It varies between runs with
+the scheduling of SquidASM's threads; see
+[Reporting metrics](netqasm-plugins.md#reporting-metrics) for what it measures,
+and for how a plugin adds its own entry. `--metrics FILE` writes the mapping to
+a JSON file.
+
 ## Logging
 
 Logging is **off by default**. SquidASM writes its logs to

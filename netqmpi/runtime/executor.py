@@ -124,3 +124,21 @@ class Executor(ABC):
                 may accept a subclass of :class:`RunConfig` with
                 additional backend-specific fields.
         """
+
+    # ------------------------------------------------------------------
+    # Optional interface
+    # ------------------------------------------------------------------
+
+    def metrics(self) -> Dict[str, Any]:
+        """
+        Return the metrics of the last :meth:`run`, as ``comm.metrics`` has them.
+
+        Kept apart from :meth:`run`, which returns nothing, so that the
+        executors that report no metrics need no change: they inherit this
+        default.
+
+        Returns:
+            The metrics of the run, grouped by who produced them. Empty for
+            a backend that reports none, or before any run.
+        """
+        return {}
