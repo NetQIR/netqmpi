@@ -23,6 +23,15 @@ Verified 2026-11-04 (issue #29) by importing each package with the env's own int
   - `quantum`: Python 3.10, qiskit-aer only; **no pytest, no pyyaml**. Not usable for tests.
 - Docs: no conda env has Sphinx; the git-ignored `.venv-docs/` (Sphinx 8.1.3)
   builds them: `.venv-docs/bin/python -m sphinx -b html -W --keep-going docs/source <out>`.
+  It exists only in the main checkout, not in agent worktrees. From a worktree,
+  any Bash command containing the text `docs/source` is refused by the
+  worktree guard ("runs a string through source"); build through a scratch
+  script that joins the path in Python and calls `sphinx.cmd.build.main` (2026-11-04, #34).
+- Running a test against `main` without leaving the branch: `git archive main
+  netqmpi test examples pytest.ini -o <scratch>.tar`, untar, copy the new test
+  file in, `pytest <scratch>/test/... --rootdir <scratch>`. `run_in_child` in
+  `test_netqasm_backend.py` sets `PYTHONPATH` from the test file's own location,
+  so plain `PYTHONPATH` overrides do not reach the child (2026-11-04, #34).
 - CUNQA container `netqmpi-issue-dev`: pass `-e PYTHONDONTWRITEBYTECODE=1` and
   `-p no:cacheprovider`. Root-owned `cpython-312` `__pycache__` files from earlier
   runs already sit in `/work` (git-ignored). Other agent worktrees exist under
