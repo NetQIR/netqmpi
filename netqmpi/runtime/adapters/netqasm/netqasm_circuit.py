@@ -401,6 +401,10 @@ class NetQASMCircuitAdapter(Circuit):
         """
         Translate a quantum send operation into a NetQASM instruction.
 
+        Each qubit is teleported: the sender waits for the receiver's
+        ``Ready`` message, creates an EPR pair with it, Bell-measures the
+        qubit against its half and sends the two outcomes as corrections.
+
         Args:
             op: Quantum send operation to translate.
         """
@@ -411,6 +415,9 @@ class NetQASMCircuitAdapter(Circuit):
 
             for q_idx in op.qubits:
                 qubit = self._qubit(q_idx)
+                # No pair is requested until the receiver has committed the
+                # qubits it already holds; see qrecv.
+                socket.recv_structured()
                 # Create EPR pair
                 epr = epr_socket.create_keep()[0]
                 # Bell measurement
@@ -438,6 +445,10 @@ class NetQASMCircuitAdapter(Circuit):
         """
         Translate a quantum receive operation into a NetQASM instruction.
 
+        For each qubit the receiver commits what it holds, sends ``Ready``
+        to the sender, keeps its half of the EPR pair and applies the
+        corrections it receives; the corrected half becomes the slot.
+
         Args:
             op: Quantum receive operation to translate.
         """
@@ -446,6 +457,17 @@ class NetQASMCircuitAdapter(Circuit):
             socket = self._comm.get_socket(self._comm.rank, op.src_rank)
 
             for q_idx in op.qubits:
+                # Commit the qubits this rank already holds, then tell the
+                # sender it may request the pair. The link layer reserves
+                # the memory position for this node's half as soon as the
+                # sender's request is served, but the executor only learns
+                # of it once recv_keep runs; a local qubit allocated in
+                # between was given that same position, and the first gate
+                # joining the two failed in the NetSquid thread with
+                # "qubit_mapping [0, 0] contains duplicate entries" and hung
+                # the run, a few shots in twenty.
+                self._comm.flush()
+                socket.send_structured(StructuredMessage("Ready", 0))
                 epr = epr_socket.recv_keep()[0]
                 self._comm.flush()
 
