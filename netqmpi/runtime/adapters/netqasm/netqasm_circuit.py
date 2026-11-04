@@ -22,7 +22,7 @@ to the simulator as soon as it is invoked on a
 """
 from __future__ import annotations
 import numpy as np
-from typing import TYPE_CHECKING, Any, List, Optional, Set
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
 from netqasm.sdk import EPRSocket, Qubit
 from netqasm.sdk.external import Socket
@@ -38,6 +38,7 @@ from netqmpi.sdk.operations import (
     OperationContainer,
     QSend, QRecv, QScatter, QGather, Expose, Unexpose,
 )
+from netqmpi.sdk.operations.qmpi import CollectiveOperation
 
 
 if TYPE_CHECKING:
@@ -84,6 +85,10 @@ class NetQASMCircuitAdapter(Circuit):
         
         self._translated_ops: List[Any] = []
         self._results: List[Any] = [None] * num_clbits
+        # Outcomes of the telegate protocol, one per protocol classical bit
+        # reserved by the trace. They live apart from the user's bits, so a
+        # window never overwrites a measurement, and they are per round.
+        self._protocol_bits: List[int] = []
 
         # -- Expose / GHZ bookkeeping (used by the circuit adapter) ---------
         self.qubits_exposed: List[Any] = []
@@ -97,12 +102,18 @@ class NetQASMCircuitAdapter(Circuit):
         """
         Clear the state a simulated round leaves behind.
 
-        Only the qubits are per-round. The emitted operations are closures
-        that look their qubits up when they run, so one translation serves
-        every shot; re-translating each time simply grew the list by a full
-        copy of the program.
+        Only the qubits and the protocol bits are per-round. The emitted
+        operations are closures that look their qubits up when they run, so
+        one translation serves every shot; re-translating each time simply
+        grew the list by a full copy of the program.
+
+        The qubit slots run past the data qubits: one per communication
+        qubit the trace reserved, where a receiver keeps the control an
+        ``expose`` window lends it, at the index
+        :meth:`~netqmpi.sdk.circuit.Circuit.comm_qubit` gives.
         """
-        self._qubits = [None] * self.num_qubits
+        self._qubits = [None] * (self.num_qubits + self.num_comm_qubits)
+        self._protocol_bits = [0] * self.num_protocol_clbits
 
     @property
     def translated_ops(self) -> List[Any]:
@@ -111,7 +122,11 @@ class NetQASMCircuitAdapter(Circuit):
 
     def peers(self) -> Set[int]:
         """
-        Return the ranks this circuit sends qubits to or receives them from.
+        Return the ranks this circuit shares EPR pairs or messages with.
+
+        A transfer pairs the two ranks it joins. A telegate window is a
+        star: the root shares a pair with every receiver, and a receiver
+        only with the root.
 
         Returns:
             The peer ranks, from the traced program.
@@ -122,6 +137,11 @@ class NetQASMCircuitAdapter(Circuit):
                 peers.add(op.dest_rank)
             elif isinstance(op, QRecv):
                 peers.add(op.src_rank)
+            elif isinstance(op, (Expose, Unexpose)):
+                if op.rank == op.root:
+                    peers.update(op.receivers)
+                else:
+                    peers.add(op.root)
         return peers
 
     def peak_qubits(self) -> int:
@@ -132,7 +152,10 @@ class NetQASMCircuitAdapter(Circuit):
         slot holds a qubit from its first use until it is measured or sent,
         a ``qsend`` holds the EPR half next to the qubit it sends, and a
         ``qrecv`` holds the incoming EPR half next to whatever its slot held
-        until the correction lands.
+        until the correction lands. In a telegate window a receiver holds
+        its communication qubit from ``expose`` to ``unexpose``, and the
+        root holds its data qubit plus one EPR half at a time while it
+        opens the window.
 
         Returns:
             The peak number of qubits live at the same time.
@@ -153,6 +176,22 @@ class NetQASMCircuitAdapter(Circuit):
                 live.update(op.qubits)
                 peak = max(peak, len(live))
                 live.difference_update(op.qubits)
+            elif isinstance(op, Expose):
+                if op.rank == op.root:
+                    # Each receiver's EPR half is measured before the next
+                    # one is created, so the root never holds two.
+                    live.add(op.data_qubit)
+                    peak = max(peak, len(live) + 1)
+                else:
+                    # The incoming EPR half *is* the communication qubit.
+                    live.add(self.comm_qubit(op.comm_slot))
+                    peak = max(peak, len(live))
+            elif isinstance(op, Unexpose):
+                if op.rank == op.root:
+                    live.add(op.data_qubit)
+                    peak = max(peak, len(live))
+                else:
+                    live.discard(self.comm_qubit(op.comm_slot))
             else:
                 live.update(q for q in op.qubits if q < self.num_qubits)
                 peak = max(peak, len(live))
@@ -167,15 +206,31 @@ class NetQASMCircuitAdapter(Circuit):
         contract is that the index still names a qubit in ``|0>``, which is
         what allocating here provides.
 
+        A communication qubit is never allocated here: it only exists while
+        an ``expose`` window has lent it a control, and a fresh ``|0>`` in
+        its place would be a control that silently never fires.
+
         Args:
-            index: Data qubit index.
+            index: Data or communication qubit index.
 
         Returns:
             The qubit currently backing that slot.
+
+        Raises:
+            RuntimeError: If ``index`` is a communication qubit holding no
+                exposed control, because it was measured inside the window.
         """
-        if self._qubits[index] is None:
-            self._qubits[index] = self._comm.create_qubit()
-        return self._qubits[index]
+        qubit = self._qubits[index]
+        if qubit is None:
+            if index >= self.num_qubits:
+                raise RuntimeError(
+                    f"rank {self._comm.rank}: communication qubit {index} "
+                    f"(slot {index - self.num_qubits}) holds no exposed "
+                    f"control: it was measured before its expose window "
+                    f"closed, and the NetQASM backend cannot close the "
+                    f"window without it.")
+            qubit = self._qubits[index] = self._comm.create_qubit()
+        return qubit
 
     def _swap(self, first: int, second: int) -> None:
         """
@@ -442,28 +497,146 @@ class NetQASMCircuitAdapter(Circuit):
 
     def _translate_expose(self, op: Expose):
         """
-        Translate an expose operation into a NetQASM instruction.
+        Translate this rank's part of an expose window (cat-entangler).
+
+        NetQASM runs one program per rank, so every participant emits its
+        own half of the protocol, as ``qsend``/``qrecv`` do, and no joint
+        expansion is needed. The window is opened as a star, one receiver
+        at a time in the order of ``op.ranks``:
+
+        - the receiver tells the root it is ready, once the qubits it
+          already holds are committed (see the receiver's comment);
+        - the root creates an EPR pair with the receiver, applies
+          ``CNOT(data, half)``, measures its half and sends the outcome;
+        - the receiver keeps the other half as its communication qubit and
+          applies ``X`` to it if the outcome is 1.
+
+        This leaves ``a|0>|0...0> + b|1>|1...1>`` over the root's data qubit
+        and the receivers' communication qubits, and the root holds a single
+        extra EPR half at a time. The outcomes go to the protocol bits
+        ``op.clbits`` the trace reserved: one per receiver on the root, one
+        on each receiver.
 
         Args:
-            op: Expose operation to translate.
-
-        Raises:
-            NotImplementedError: Always, because this operation is not yet supported.
+            op: This rank's expose record.
         """
-        raise NotImplementedError("Expose is not implemented for the NetQASM backend.")
+        header = f"expose {op.tag}"
+
+        def netqasm_expose_root():
+            data = self._qubit(op.data_qubit)
+            for receiver, cbit in zip(op.receivers, op.clbits):
+                epr_socket = self._comm.get_epr_socket(self._comm.rank, receiver)
+                socket = self._comm.get_socket(self._comm.rank, receiver)
+
+                # See the receiver: no pair is requested until both nodes
+                # have committed the qubits they already hold.
+                self._comm.flush()
+                self._receive(socket, f"ready {op.tag}", receiver)
+                half = epr_socket.create_keep()[0]
+                data.cnot(half)
+                outcome = half.measure()
+                # Resolve the future before it goes on the wire; see qsend.
+                self._comm.flush()
+                self._protocol_bits[cbit] = int(outcome)
+                socket.send_structured(
+                    StructuredMessage(header, self._protocol_bits[cbit]))
+
+        def netqasm_expose_receiver():
+            epr_socket = self._comm.get_epr_socket(self._comm.rank, op.root)
+            socket = self._comm.get_socket(self._comm.rank, op.root)
+
+            # Commit the qubits this rank already holds, then tell the root
+            # it may request the pair. The link layer picks the memory
+            # position for this node's half when the root's request arrives;
+            # a local qubit not yet allocated by then could be given that
+            # same position, and the first gate between the two failed with
+            # "qubit_mapping [0, 0] contains duplicate entries" — a few
+            # rounds in twenty, since it races the root's request.
+            self._comm.flush()
+            socket.send_structured(StructuredMessage(f"ready {op.tag}", 0))
+            half = epr_socket.recv_keep()[0]
+            self._comm.flush()
+            outcome = self._receive(socket, header, op.root)
+            self._protocol_bits[op.clbits[0]] = outcome
+            if outcome == 1:
+                half.X()
+            self._qubits[self.comm_qubit(op.comm_slot)] = half
+            self._comm.flush()
+
+        self._translated_ops.append(
+            netqasm_expose_root if op.rank == op.root else netqasm_expose_receiver)
 
     def _translate_unexpose(self, op: Unexpose):
         """
-        Translate an unexpose operation into a NetQASM instruction.
+        Translate this rank's part of an unexpose (cat-disentangler).
+
+        Each receiver measures its communication qubit in the X basis and
+        sends the outcome to the root, which applies ``Z`` to its data qubit
+        if the outcomes have odd parity. The root reads the receivers in
+        the order of ``op.ranks`` into its protocol bits, overwriting the
+        expose outcomes it no longer needs.
 
         Args:
-            op: Unexpose operation to translate.
+            op: This rank's unexpose record.
+        """
+        header = f"unexpose {op.tag}"
+
+        def netqasm_unexpose_root():
+            parity = 0
+            for receiver, cbit in zip(op.receivers, op.clbits):
+                socket = self._comm.get_socket(self._comm.rank, receiver)
+                self._protocol_bits[cbit] = self._receive(socket, header, receiver)
+                parity ^= self._protocol_bits[cbit]
+            if parity == 1:
+                self._qubit(op.data_qubit).Z()
+
+        def netqasm_unexpose_receiver():
+            socket = self._comm.get_socket(self._comm.rank, op.root)
+            index = self.comm_qubit(op.comm_slot)
+
+            control = self._qubit(index)
+            control.H()
+            outcome = control.measure()
+            self._comm.flush()
+            # Measuring consumed the qubit, and the window is closed.
+            self._qubits[index] = None
+            self._protocol_bits[op.clbits[0]] = int(outcome)
+            socket.send_structured(
+                StructuredMessage(header, self._protocol_bits[op.clbits[0]]))
+
+        self._translated_ops.append(
+            netqasm_unexpose_root if op.rank == op.root else netqasm_unexpose_receiver)
+
+    def _receive(self, socket: Socket, header: str, peer: int) -> int:
+        """
+        Receive one telegate outcome and check it belongs to this call.
+
+        The messages between two ranks share one socket per round and arrive
+        in the order they were sent, so a header that does not match means
+        the two ranks reached their calls in different orders. Reading the
+        bit anyway would apply another call's correction and return a
+        plausible, wrong histogram.
+
+        Args:
+            socket: Classical socket to the peer.
+            header: Header the expected message carries.
+            peer: Rank at the other end, for the error message.
+
+        Returns:
+            The outcome, 0 or 1.
 
         Raises:
-            NotImplementedError: Always, because this operation is not yet supported.
+            RuntimeError: If the message is not the one this call expects.
         """
-        raise NotImplementedError("Unexpose is not implemented for the NetQASM backend.")
-    
+        message = socket.recv_structured()
+        if message.header != header:
+            raise RuntimeError(
+                f"rank {self._comm.rank} expected the {header!r} outcome from "
+                f"rank {peer} but received {message.header!r} "
+                f"({message.payload!r}): the two ranks reached their transfers "
+                f"and telegate windows in different orders.")
+        return int(message.payload)
+
     def translate(self, op: Operation) -> Any:
         """
         Dispatch an operation to its corresponding translation method.
@@ -513,3 +686,149 @@ class NetQASMCircuitAdapter(Circuit):
         )
 
         return ghz_qubit
+
+# ----------------------------------------------------------------------
+# Cross-rank check of the collective calls
+# ----------------------------------------------------------------------
+
+def check_collectives(circuits: Dict[int, NetQASMCircuitAdapter], size: int) -> None:
+    """
+    Refuse a program whose ranks cannot all get through their collectives.
+
+    Each rank runs its own program, so an ``expose`` that a participant
+    never reaches, or reaches after a different window, does not fail: the
+    ranks wait on each other until SquidASM's wall-clock timeout, if ever.
+    This replays the traced order of the collective calls instead — every
+    rank advances to its next collective, and a call goes through once all
+    its participants sit on it — and reports, before the simulation starts,
+    the calls that can never complete.
+
+    Transfers are left out: a ``qsend`` and its ``qrecv`` are paired at run
+    time and do not take part in this check.
+
+    Args:
+        circuits: One circuit per rank, keyed by rank; the circuits that form
+            one distributed program.
+        size: Number of ranks in the run.
+
+    Raises:
+        RuntimeError: If a collective names a rank outside the run, or if
+            the ranks block on collectives that never match — the trace
+            equivalent of a deadlock.
+    """
+    streams = {
+        rank: [op for op in circuit.ops.flatten()
+               if isinstance(op, CollectiveOperation)]
+        for rank, circuit in circuits.items()
+    }
+    cursors = {rank: 0 for rank in streams}
+
+    while True:
+        blocked = {rank: streams[rank][cursors[rank]] for rank in streams
+                   if cursors[rank] < len(streams[rank])}
+        if not blocked:
+            return
+
+        ready: Optional[CollectiveOperation] = None
+        for rank in sorted(blocked):
+            op = blocked[rank]
+            outside = [r for r in op.ranks if not 0 <= r < size]
+            if outside:
+                raise RuntimeError(
+                    f"rank {rank} called {_describe_collective(op)}, which names "
+                    f"{_rank_list(outside)}, but this run has {size} ranks, "
+                    f"numbered 0 to {size - 1}. A collective can only name ranks "
+                    f"taking part in the run, so nothing can ever match that call.")
+            if all(r in blocked and op.matches(blocked[r]) for r in op.ranks):
+                ready = op
+                break
+
+        if ready is None:
+            raise RuntimeError(_deadlock_report(blocked))
+        for rank in ready.ranks:
+            cursors[rank] += 1
+
+
+def _rank_list(ranks: List[int]) -> str:
+    """
+    Spell a list of ranks the way a sentence would.
+
+    Args:
+        ranks: Ranks to name.
+
+    Returns:
+        ``"rank 7"``, ``"ranks 7 and 9"``, ``"ranks 7, 9 and 11"``.
+    """
+    names = [str(r) for r in sorted(ranks)]
+    if len(names) == 1:
+        return f"rank {names[0]}"
+    return "ranks " + ", ".join(names[:-1]) + " and " + names[-1]
+
+
+def _describe_collective(op: CollectiveOperation) -> str:
+    """
+    Spell a collective record the way the user wrote the call.
+
+    Args:
+        op: Record of an ``expose`` or ``unexpose``.
+
+    Returns:
+        The call as it appears in the program, receivers and root.
+    """
+    name = "expose" if isinstance(op, Expose) else "unexpose"
+    return f"{name}(ranks={op.ranks[1:]}, root={op.ranks[0]})"
+
+
+def _deadlock_report(blocked: Dict[int, CollectiveOperation]) -> str:
+    """
+    Explain which ranks reached a collective call and which did not.
+
+    The wording is the CUNQA backend's, so a program that deadlocks reads
+    the same on both.
+
+    Args:
+        blocked: Collective each blocked rank is waiting on, keyed by rank.
+
+    Returns:
+        The message of the deadlock error.
+    """
+    calls: Dict[Tuple[Any, ...], CollectiveOperation] = {}
+    for rank in sorted(blocked):
+        op = blocked[rank]
+        calls.setdefault((type(op).__name__, op.tag, tuple(op.ranks)), op)
+
+    lines: List[str] = []
+    never_called = False
+    called_something_else = False
+    for op in calls.values():
+        reached = [r for r in op.ranks
+                   if r in blocked and op.matches(blocked[r])]
+        missing = [r for r in op.ranks if r not in reached]
+        lines.append(f"  {_describe_collective(op)}")
+        lines.append(
+            "      called by:  "
+            + ", ".join(f"rank {r}" for r in sorted(reached)))
+        for rank in sorted(missing):
+            if rank in blocked:
+                called_something_else = True
+                doing = f"is waiting on {_describe_collective(blocked[rank])}"
+            else:
+                never_called = True
+                doing = "finished its block without calling it"
+            lines.append(f"      missing:    rank {rank}, which {doing}")
+
+    if never_called:
+        lines.append(
+            "  Every rank a collective names has to call it, just as every rank "
+            "of an MPI_Bcast calls it.")
+    if called_something_else:
+        lines.append(
+            "  These ranks are waiting on different calls: the participants of a "
+            "collective have to reach theirs in the same order, and open and "
+            "close nested windows in the same order too.")
+
+    return (
+        "Deadlock while translating the group: a collective call is waiting "
+        "for ranks that never reached it.\n"
+        + "\n".join(lines)
+    )

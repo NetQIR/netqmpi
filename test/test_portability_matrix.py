@@ -112,6 +112,75 @@ def all_zeros(histogram) -> bool:
 
 @pytest.mark.parametrize("backend, app, ranks, qubits", list(cases()))
 def test_app_returns_all_zeros(backend, app, ranks, qubits, tmp_path):
+    assert_all_zeros(backend, APPS / f"{app}.py", ranks, qubits, tmp_path)
+
+
+#: Telegate echo, written for every backend that implements ``expose``:
+#: rank 0 lends ``|+>`` to every other rank, which applies a CNOT and a CZ
+#: from it to each of its qubits, and a second window undoes both, in the
+#: reverse order. The register returns to all zeros, and rank 0 only reads 0
+#: if every window gave it its phase back. ``qft_telegate`` needs
+#: controlled-P, which NetQASM lacks, so this is its portable stand-in.
+TELEGATE_ECHO = """
+    import os
+    from netqmpi.sdk.environment import Environment
+
+    Q = int(os.environ.get("NQB_QUBITS_PER_RANK", "1"))
+
+    def main(env: Environment = None):
+        comm, rank, size = env.comm, env.comm.rank, env.comm.size
+        receivers = list(range(1, size))
+        with comm:
+            circuit = env.create_circuit(num_qubits=Q, num_clbits=Q)
+            if rank == 0:
+                circuit.h(0)
+            for undo in (False, True):
+                handle = comm.expose(circuit, 0, receivers, root=0)
+                if rank != 0:
+                    for target in range(Q):
+                        if undo:
+                            circuit.cz(handle, target)
+                            circuit.cx(handle, target)
+                        else:
+                            circuit.cx(handle, target)
+                            circuit.cz(handle, target)
+                comm.unexpose(circuit, receivers, root=0)
+            if rank == 0:
+                circuit.h(0)
+            for i in range(Q):
+                circuit.measure(i, i)
+"""
+
+
+def telegate_cases():
+    """Every (backend, ranks, qubits) the telegate echo covers."""
+    for backend in ("aer", "netqasm"):
+        marks = [pytest.mark.slow]
+        if backend == "netqasm":
+            marks.append(pytest.mark.integration)
+        if not available(backend):
+            marks.append(pytest.mark.skip(reason=f"{backend} is not installed"))
+        for ranks in RANKS:
+            # Measured, not assumed: on NetQASM 1.x the echo passed up to n=4
+            # (and n=8, q=1, in 144 s), was killed at n=8, q=2 and hung past
+            # the deadline at n=12. Those sizes are left out until the star
+            # topology's scale limits are understood, rather than pinned red.
+            if backend == "netqasm" and ranks > 4:
+                continue
+            for qubits in QUBITS:
+                yield pytest.param(backend, ranks, qubits, marks=marks,
+                                   id=f"{backend}-telegate_echo-n{ranks}-q{qubits}")
+
+
+@pytest.mark.parametrize("backend, ranks, qubits", list(telegate_cases()))
+def test_telegate_echo_returns_all_zeros(backend, ranks, qubits, tmp_path):
+    app = tmp_path / "telegate_echo.py"
+    app.write_text(textwrap.dedent(TELEGATE_ECHO))
+    assert_all_zeros(backend, app, ranks, qubits, tmp_path)
+
+
+def assert_all_zeros(backend, app, ranks, qubits, tmp_path):
+    """Run ``app`` in a child process and demand all-zeros on every rank."""
     driver = tmp_path / "driver.py"
     driver.write_text(textwrap.dedent(CHILD))
     deadline = DEADLINE[backend]
@@ -119,7 +188,7 @@ def test_app_returns_all_zeros(backend, app, ranks, qubits, tmp_path):
                NQB_QUBITS_PER_RANK=str(qubits))
     try:
         child = subprocess.run(
-            [sys.executable, str(driver), backend, str(APPS / f"{app}.py"),
+            [sys.executable, str(driver), backend, str(app),
              str(ranks), str(SHOTS[backend]), str(deadline - 15)],
             cwd=tmp_path, env=env, capture_output=True, text=True,
             timeout=deadline)

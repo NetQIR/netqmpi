@@ -25,6 +25,7 @@ from netqasm.runtime.settings import Formalism, Simulator, set_simulator
 from netqasm.util.yaml import load_yaml
 
 from netqmpi.runtime.adapters.netqasm import _simulation
+from netqmpi.runtime.adapters.netqasm.netqasm_circuit import check_collectives
 from netqmpi.sdk.operations import QRecv, QSend
 
 if TYPE_CHECKING:
@@ -41,7 +42,8 @@ class NetQASMCommunicator(QMPICommunicator):
     EPR sockets, and lazily created classical sockets.
 
     Both kinds of socket are opened only towards the *peers* of the rank —
-    the ranks its traced program sends to or receives from. Opening an EPR
+    the ranks its traced program sends to or receives from, and those it
+    shares an expose window with (the root and each receiver). Opening an EPR
     socket makes SquidASM set up a circuit with the remote node under a
     wall-clock timeout, so doing it towards every rank cost O(size^2)
     set-ups per shot where a chain or a star needs O(size).
@@ -207,6 +209,7 @@ class NetQASMCommunicator(QMPICommunicator):
 
         if len(NetQASMCommunicator.netqasm_circuits) == self.size:
             try:
+                self._check_collectives()
                 self._simulate(argv_per_rank)
             finally:
                 # Class-level state belongs to one run. Leaving it behind
@@ -217,6 +220,27 @@ class NetQASMCommunicator(QMPICommunicator):
                 NetQASMCommunicator.reset_run()
 
         return None
+
+    def _check_collectives(self) -> None:
+        """
+        Check, across every rank, that the collective calls can all complete.
+
+        Called by the last rank to leave its block, before any socket is
+        opened: a window that can never complete would otherwise leave the
+        ranks waiting on each other inside SquidASM. The *i*-th circuit of
+        every rank forms one distributed program and is checked as such.
+
+        Raises:
+            RuntimeError: See
+                :func:`~netqmpi.runtime.adapters.netqasm.netqasm_circuit.check_collectives`.
+        """
+        communicators = NetQASMCommunicator.communicators
+        programs = max((len(comm.circuits) for comm in communicators), default=0)
+        for index in range(programs):
+            check_collectives(
+                {comm.rank: comm.circuits[index] for comm in communicators
+                 if index < len(comm.circuits)},
+                self.size)
 
     def _simulate(self, argv_per_rank: dict) -> None:
         """

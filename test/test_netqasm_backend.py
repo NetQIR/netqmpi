@@ -413,3 +413,161 @@ def test_a_program_too_big_for_the_default_network_is_refused(tmp_path):
     output = run_in_child(app, 2, tmp_path, timeout=60,
                           env={"NQB_QUBITS_PER_RANK": "6"})
     assert "RAISED ValueError" in output and "needs 7 qubits" in output, output
+
+
+# ----------------------------------------------------------------------
+# Telegate windows. Every expectation is deterministic, and is what the Aer
+# backend gives for the same program (see test_aer_primitives.py).
+# ----------------------------------------------------------------------
+
+#: A remote CNOT: rank 0 lends its control, rank 1 holds the target.
+REMOTE_CNOT = """
+    from netqmpi.sdk.environment import Environment
+
+    def main(env: Environment = None):
+        comm, rank = env.comm, env.comm.rank
+        with comm:
+            circuit = env.create_circuit(num_qubits=1, num_clbits=1)
+            if rank == 0 and {control}:
+                circuit.x(0)
+            if rank == 1 and {target}:
+                circuit.x(0)
+            handle = comm.expose(circuit, 0, [1], root=0)
+            if rank == 1:
+                circuit.cx(handle, 0)
+            comm.unexpose(circuit, [1], root=0)
+            circuit.measure(0, 0)
+"""
+
+#: One root, two receivers in one window: a CNOT on rank 1, and on rank 2 a
+#: CZ between Hadamards, which is the same CNOT.
+ONE_ROOT_TWO_RECEIVERS = """
+    from netqmpi.sdk.environment import Environment
+
+    def main(env: Environment = None):
+        comm, rank = env.comm, env.comm.rank
+        with comm:
+            circuit = env.create_circuit(num_qubits=1, num_clbits=1)
+            if rank == 0 and {payload}:
+                circuit.x(0)
+            handle = comm.expose(circuit, 0, [1, 2], root=0)
+            if rank == 1:
+                circuit.cx(handle, 0)
+            elif rank == 2:
+                circuit.h(0)
+                circuit.cz(handle, 0)
+                circuit.h(0)
+            comm.unexpose(circuit, [1, 2], root=0)
+            circuit.measure(0, 0)
+"""
+
+#: The root lends |+> and takes it back through a Hadamard. The unexpose
+#: correction is all that keeps the root's answer deterministic: without
+#: its Z the root reads a coin flip. With ``kick`` set the receiver's target
+#: is |1>, so its CZ kicks a phase back and the root must read 1 instead.
+PHASE_COMES_BACK = """
+    from netqmpi.sdk.environment import Environment
+
+    def main(env: Environment = None):
+        comm, rank = env.comm, env.comm.rank
+        with comm:
+            circuit = env.create_circuit(num_qubits=1, num_clbits=1)
+            if rank == 0:
+                circuit.h(0)
+            if rank == 1 and {kick}:
+                circuit.x(0)
+            handle = comm.expose(circuit, 0, [1], root=0)
+            if rank == 1:
+                circuit.cz(handle, 0)
+            comm.unexpose(circuit, [1], root=0)
+            if rank == 0:
+                circuit.h(0)
+            circuit.measure(0, 0)
+"""
+
+#: Two windows over different groups, one open across the other: the shape
+#: of examples/5_qft_expose.py, with CNOTs instead of controlled phases.
+NESTED_WINDOWS = """
+    from netqmpi.sdk.environment import Environment
+
+    def main(env: Environment = None):
+        comm, rank = env.comm, env.comm.rank
+        with comm:
+            circuit = env.create_circuit(num_qubits=1, num_clbits=1)
+            if rank == 2:
+                circuit.x(0)                       # only rank 2 lends a |1>
+            outer = comm.expose(circuit, 0, [0, 1], root=2)
+            inner = comm.expose(circuit, 0, [0], root=1)
+            if rank == 0:
+                circuit.cx(inner, 0)               # control is |0>: no-op
+                circuit.cx(outer, 0)               # control is |1>: flips
+            comm.unexpose(circuit, [0], root=1)
+            if rank == 1:
+                circuit.cx(outer, 0)               # still open: flips
+            comm.unexpose(circuit, [0, 1], root=2)
+            circuit.measure(0, 0)
+"""
+
+#: The same window opened four times on one comm slot, with a superposed
+#: control and two targets. Each window entangles or disentangles the
+#: ranks, so every one of them has to be opened and closed correctly for
+#: the echo to come back to all zeros.
+WINDOW_REOPENED = """
+    from netqmpi.sdk.environment import Environment
+
+    def main(env: Environment = None):
+        comm, rank = env.comm, env.comm.rank
+        with comm:
+            circuit = env.create_circuit(num_qubits=2, num_clbits=2)
+            if rank == 0:
+                circuit.h(0)
+            for _ in range(4):
+                handle = comm.expose(circuit, 0, [1], root=0)
+                if rank == 1:
+                    circuit.cx(handle, 0)
+                    circuit.cx(handle, 1)
+                comm.unexpose(circuit, [1], root=0)
+            if rank == 0:
+                circuit.h(0)
+            circuit.measure(0, 0)
+            circuit.measure(1, 1)
+"""
+
+
+@pytest.mark.parametrize("control, target", [(0, 0), (0, 1), (1, 0), (1, 1)])
+def test_a_remote_cnot_follows_the_truth_table(control, target, tmp_path):
+    """Rank 0's control flips rank 1's target, and comes back untouched."""
+    source = REMOTE_CNOT.format(control=control, target=target)
+    results = run_app(source, 2, tmp_path, shots=2)
+    assert results[0] == {str(control): 2}, results
+    assert results[1] == {str(target ^ control): 2}, results
+
+
+@pytest.mark.parametrize("payload", [0, 1])
+def test_one_window_serves_two_receivers(payload, tmp_path):
+    """Both receivers read the control, through a cx and through a cz."""
+    results = run_app(ONE_ROOT_TWO_RECEIVERS.format(payload=payload), 3,
+                      tmp_path, shots=2)
+    assert results == {0: {str(payload): 2}, 1: {str(payload): 2},
+                       2: {str(payload): 2}}, results
+
+
+@pytest.mark.parametrize("kick", [0, 1])
+def test_unexpose_gives_the_root_its_phase_back(kick, tmp_path):
+    """The cat-disentangler's Z correction keeps the root coherent."""
+    results = run_app(PHASE_COMES_BACK.format(kick=kick), 2, tmp_path,
+                      shots=4)
+    assert results[0] == {str(kick): 4}, results
+    assert results[1] == {str(kick): 4}, results
+
+
+def test_windows_over_different_groups_nest(tmp_path):
+    """Both receivers see rank 2's control as 1 and rank 1's as 0."""
+    results = run_app(NESTED_WINDOWS, 3, tmp_path, shots=2)
+    assert results == {0: {"1": 2}, 1: {"1": 2}, 2: {"1": 2}}, results
+
+
+def test_a_window_can_be_opened_again(tmp_path):
+    """Four windows in a row on one slot: an echo back to all zeros."""
+    results = run_app(WINDOW_REOPENED, 2, tmp_path, shots=4)
+    assert results == {0: {"00": 4}, 1: {"00": 4}}, results
