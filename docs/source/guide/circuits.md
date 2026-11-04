@@ -128,7 +128,7 @@ express raises `NotImplementedError`.
 | `barrier` | ❌ | ❌ | ✅ | ❌ |
 | Classically controlled gates | ❌ | ❌ | ❌ | ❌ |
 | `qsend` / `qrecv` | ✅ | ✅ | ⚠️ [^aerswap] | ✅ |
-| `qscatter` / `qgather` | ✅ | ❌ | ❌ | ❌ |
+| `qscatter` / `qgather` | ✅ | ✅ | ❌ | ❌ |
 | `expose` / `unexpose` | ✅ | ✅ | ✅ | ❌ |
 
 [^nqrot]: The NetQASM adapter emits `rot_X(n=round(theta), d=16)`, i.e. an angle

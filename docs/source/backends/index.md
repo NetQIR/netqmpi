@@ -40,7 +40,7 @@ SWAP.
 | | CUNQA | NetQASM | Aer | Qoala |
 |---|:--:|:--:|:--:|:--:|
 | `qsend` / `qrecv` | ✅ | ✅ | ⚠️ SWAP-based | ✅ |
-| `qscatter` / `qgather` | ✅ | ⚠️ scatter only | ✅ | ❌ |
+| `qscatter` / `qgather` | ✅ | ✅ | ✅ | ❌ |
 | `expose` / `unexpose` | ✅ | ✅ | ✅ | ❌ |
 | Controlled gates | ✅ | `cx`, `cz` | ✅ incl. phase family | `cx`, `cz` |
 | `reset` | ✅ | ❌ | ✅ | ❌ |

@@ -72,8 +72,8 @@ gate.
 | `test_aer_primitives.py` | execution | Qiskit Aer | 62 | Every gate and every primitive, run end to end |
 | `test_aer_transfers.py` | execution | Qiskit Aer | 13 | Cross-rank ordering regressions in the joint translation pass |
 | `test_examples.py` | execution | Qiskit Aer | 7 | The five shipped examples, against their documented output |
-| `test_netqasm_adapter.py` | runtime | NetQASM | 42 | What the NetQASM adapter decides before SquidASM runs: network, capacity, EPR peers, logging, failures, and the cross-rank check of `expose`/`unexpose` |
-| `test_netqasm_backend.py` | execution | SquidASM + NetSquid | 23 | The NetQASM adapter end to end, telegate windows included (marked `integration`) |
+| `test_netqasm_adapter.py` | runtime | NetQASM | 45 | What the NetQASM adapter decides before SquidASM runs: network, capacity, EPR peers, logging, failures, the cross-rank check of `expose`/`unexpose`, and the header check on every protocol message |
+| `test_netqasm_backend.py` | execution | SquidASM + NetSquid | 27 | The NetQASM adapter end to end, telegate windows included (marked `integration`), and runs that used to hang: transfers into a rank that already holds qubits, `4_gather`, a rank failing mid-simulation |
 | `test_netqasm_plugin.py` | execution | SquidASM + NetSquid | 41 | Simulation plugins on the NetQASM backend: precedence of `run_defaults`, `configure` before tracing, the two example plugins, and the metrics a run reports: what a plugin yields, simulated time per shot, `--metrics` |
 | `test_qoala_backend.py` | execution | qoala-sim + NetSquid | 9 | The Qoala adapter's gate table |
 
