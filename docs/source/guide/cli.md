@@ -4,8 +4,11 @@ NetQMPI installs a single console entry point, `netqmpi`, defined in
 {mod}`netqmpi.runtime.cli`.
 
 ```bash
-netqmpi -n <NUM_NODES> <script.py> [--cunqa | --netqasm | --aer | --qoala]
+netqmpi -n <NUM_NODES> <script.py> [--cunqa | --netqasm | --netqasm1.0 | --aer | --qoala]
         [--shots N] [--config config.yaml]
+        [--plugin NAME] [--plugin-config params.yaml]
+netqmpi --list-plugins
+netqmpi --version
 ```
 
 ## Arguments
@@ -17,9 +20,9 @@ netqmpi -n <NUM_NODES> <script.py> [--cunqa | --netqasm | --aer | --qoala]
 : Path to the NetQMPI Python script. It must be a `.py` file defining a
   `main()` function; both conditions are checked before anything is built.
 
-`--cunqa` / `--netqasm` / `--aer` / `--qoala`
-: Backend selection. Mutually exclusive. If none is given, NetQMPI falls back to
-  NetQASM and says so:
+`--cunqa` / `--netqasm` / `--netqasm1.0` / `--aer` / `--qoala`
+: Backend selection. Mutually exclusive. `--squidasm` is an alias of
+  `--netqasm`. If none is given, NetQMPI falls back to NetQASM and says so:
 
   ```text
   No backend flag; using default (NetQASM)
@@ -27,12 +30,28 @@ netqmpi -n <NUM_NODES> <script.py> [--cunqa | --netqasm | --aer | --qoala]
 
 `--shots N`
 : Number of shots. Overrides the value in `--config`, if any, so a quick run can
-  bump the shot count without editing the file. Defaults to 1024.
+  bump the shot count without editing the file. Defaults to 1024, except on
+  NetQASM, where it is 50 (see [the NetQASM backend](../backends/netqasm.md#configuration)).
 
 `--config PATH`
 : Path to a YAML file with generic settings and an optional per-backend block.
   This replaces per-backend command-line flags — see
   [Configuration](configuration.md).
+
+`--plugin NAME`
+: [Simulation plugin](../backends/netqasm-plugins.md) to run with: the short
+  name of an installed plugin or `module:callable`. Overrides `plugin` in
+  `--config`. NetQASM backend only: any other backend refuses it with a usage
+  error rather than running without it.
+
+`--plugin-config FILE`
+: YAML file with the plugin's parameters, a mapping handed to it as
+  `plugin_config`. Overrides `plugin_config` in `--config`. NetQASM backend
+  only, like `--plugin`.
+
+`--list-plugins`
+: Print each installed plugin — its name, the `module:attribute` it points to,
+  and the distribution and version that provide it — and exit.
 
 ## Examples
 
@@ -51,6 +70,9 @@ netqmpi -n 2 examples/1_send_recv.py --aer --shots 1024
 
 # Node execution environment, with a noise model
 netqmpi -n 2 examples/1_send_recv.py --qoala --config qoala.yaml
+
+# Quantum-network simulation on the hardware model of an installed plugin
+netqmpi -n 3 app.py --netqasm --plugin nv_2026 --plugin-config nv.yaml
 ```
 
 ## Which NetQMPI is this?

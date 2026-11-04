@@ -151,8 +151,8 @@ The `netqasm` block accepts the fields of
 | `log_cfg` | `None` | NetQASM log configuration |
 | `roles` | `"roles.yaml"` | Roles configuration file |
 | `post_function` | `None` | Function invoked after the simulation |
-| `plugin` | `None` | `"module:callable"` naming a [simulation plugin](netqasm-plugins.md) |
-| `plugin_config` | `None` | Parameters handed to the plugin, unread by NetQMPI |
+| `plugin` | `None` | Installed plugin's short name or `"module:callable"` naming a [simulation plugin](netqasm-plugins.md); `--plugin` on the command line |
+| `plugin_config` | `None` | Parameters handed to the plugin, unread by NetQMPI; `--plugin-config FILE` on the command line |
 
 :::{important}
 `shots` defaults to **50** here, not to the generic 1024. SquidASM simulates
