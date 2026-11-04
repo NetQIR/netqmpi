@@ -229,11 +229,13 @@ Only **CUNQA** implements all three families today.
 |---|:--:|:--:|:--:|:--:|
 | `qsend` / `qrecv` | ✅ | ✅ | ⚠️ SWAP-based | ✅ |
 | `qscatter` / `qgather` | ✅ | ❌ | ❌ | ❌ |
-| `expose` / `unexpose` | ✅ | ❌ | ❌ | ❌ |
+| `expose` / `unexpose` | ✅ | ✅ | ✅ | ❌ |
 
 On CUNQA the telegate window is expanded by
 {func}`~netqmpi.runtime.adapters.cunqa.cunqa_circuit.translate_group`, because
 CUNQA's `cat_entangler` / `cat_disentangler` helpers write into *every*
 participating circuit in a single call. That is why the per-rank
 `_translate_expose` hook of the CUNQA adapter deliberately raises instead of
-emitting anything.
+emitting anything. NetQASM runs one program per rank instead, so each
+participant emits its own half of the cat-entangler and cat-disentangler over
+EPR sockets — see [the NetQASM backend](../backends/netqasm.md#telegate-windows).
