@@ -1,0 +1,23 @@
+# Makes this example an installable plugin package. After
+#
+#   pip install ./examples/plugins/readout_error
+#
+# it is selected by its short name from any directory:
+#
+#   netqmpi -n 2 app.py --netqasm --plugin readout_error --plugin-config params.yaml
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "netqmpi-example-readout-error"
+version = "0.1.0"
+description = "Example NetQMPI simulation plugin for the NetQASM backend"
+requires-python = ">=3.8"
+dependencies = ["netqmpi", "squidasm>=0.13,<0.14"]
+
+[tool.setuptools]
+py-modules = ["readout_error"]
+
+[project.entry-points."netqmpi.plugins"]
+readout_error = "readout_error:readout_error"

@@ -1,0 +1,9 @@
+# The plugin's parameters alone, for --plugin-config; the same values as
+# plugin_config in config.yaml. Times in ns.
+#
+#   netqmpi -n 2 app.py --netqasm --plugin gate_noise --plugin-config params.yaml
+single_qubit_depolar_prob: 0.01
+two_qubit_depolar_prob: 0.2
+single_qubit_duration: 50.0
+two_qubit_duration: 300.0
+init_duration: 1000.0
