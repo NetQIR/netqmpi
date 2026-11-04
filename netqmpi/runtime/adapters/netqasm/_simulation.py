@@ -27,9 +27,7 @@ from __future__ import annotations
 
 import copy
 import functools
-import importlib
 import os
-import sys
 import tempfile
 from contextlib import contextmanager
 from datetime import datetime
@@ -42,6 +40,8 @@ from netqasm.runtime.interface.config import (
     Link, NetworkConfig, Node, NoiseType, QuantumHardware, Qubit,
 )
 from netqasm.sdk.config import LogConfig
+
+from netqmpi import plugins
 
 if TYPE_CHECKING:
     from netqmpi.runtime.adapters.netqasm.netqasm_communicator import (
@@ -242,41 +242,22 @@ def squidasm_patches(epr_setup_timeout: float,
 
 def load_plugin(spec: str) -> Callable[[Dict[str, Any]], ContextManager]:
     """
-    Import the plugin a ``"module:callable"`` string names.
+    Find the plugin a run config names.
 
-    The module is looked up as ``python -m`` would, from the working
-    directory first, so a plugin can live next to the program that uses it.
+    A thin alias of :func:`netqmpi.plugins.load`, which is backend-agnostic.
 
     Args:
-        spec: ``"package.module:callable"``.
+        spec: A short name registered in the ``netqmpi.plugins`` entry-point
+            group, or ``"package.module:callable"``, imported from the
+            working directory first.
 
     Returns:
-        The callable.
+        The plugin.
 
     Raises:
-        ValueError: If the string is malformed, the module cannot be
-            imported, or the name is not a callable in it.
+        ValueError: If the plugin cannot be found, imported or called.
     """
-    module_name, _, attribute = spec.partition(":")
-    if not module_name or not attribute:
-        raise ValueError(f"plugin must read 'module:callable', got {spec!r}.")
-
-    cwd = os.getcwd()
-    added = cwd not in sys.path
-    if added:
-        sys.path.insert(0, cwd)
-    try:
-        module = importlib.import_module(module_name)
-    except ImportError as error:
-        raise ValueError(f"Cannot import plugin module {module_name!r}: {error}") from error
-    finally:
-        if added:
-            sys.path.remove(cwd)
-
-    factory = getattr(module, attribute, None)
-    if not callable(factory):
-        raise ValueError(f"Plugin module {module_name!r} has no callable {attribute!r}.")
-    return factory
+    return plugins.load(spec)
 
 
 @contextmanager

@@ -21,11 +21,16 @@ The doubles below supply the two collaborators the SDK needs:
 - :class:`StubExecutor`, an :class:`~netqmpi.runtime.executor.Executor`
   that hands out :class:`RecordingCircuit` instances.
 
+The :func:`install_plugins` fixture installs simulation plugins the way a
+plugin package does, through ``netqmpi.plugins`` entry points, without pip.
+
 Tests that need a real simulator live in the backend files and guard
 themselves with ``importorskip``.
 """
 from __future__ import annotations
 
+import sys
+import textwrap
 from typing import Any, Dict, List, Optional, Tuple
 
 import pytest
@@ -206,3 +211,121 @@ def make_group(make_circuit):
                 for rank in range(size)}
 
     return factory
+
+
+#: The module of the dummy plugin package :func:`install_plugins` installs.
+#: Every kind of plugin NetQMPI has to tell apart lives in it.
+DUMMY_PLUGIN_MODULE = "netqmpi_dummy_plugin"
+
+DUMMY_PLUGIN_SOURCE = """
+    import contextlib
+
+    CALLS = []
+
+    class Device:
+        \"\"\"A plugin with every optional member of the contract.\"\"\"
+        run_defaults = {"num_qubits": 3, "shots": 7}
+        backends = ("netqasm",)
+
+        def configure(self, plugin_config, run_config):
+            CALLS.append(("configure", dict(plugin_config),
+                          run_config.num_qubits, run_config.shots))
+            if plugin_config.get("bad"):
+                raise ValueError("dummy_device: 'bad' is not a parameter")
+            # Neither change may reach the run: both are copies.
+            run_config.num_qubits = 99
+            plugin_config["tampered"] = True
+
+        def __call__(self, plugin_config):
+            CALLS.append(("enter", dict(plugin_config)))
+            return contextlib.nullcontext()
+
+    device = Device()
+
+    def plain(plugin_config):
+        \"\"\"A plugin with none of the optional members.\"\"\"
+        CALLS.append(("enter", dict(plugin_config)))
+        return contextlib.nullcontext()
+
+    class ForQoala:
+        backends = ("qoala",)
+
+        def __call__(self, plugin_config):
+            return contextlib.nullcontext()
+
+    for_qoala = ForQoala()
+
+    class TypoInDefaults:
+        run_defaults = {"num_qbits": 3}
+
+        def __call__(self, plugin_config):
+            return contextlib.nullcontext()
+
+    typo_in_defaults = TypoInDefaults()
+"""
+
+#: Entry points of the dummy distribution: name -> ``module:attribute``.
+DUMMY_ENTRY_POINTS = {
+    "dummy_device": f"{DUMMY_PLUGIN_MODULE}:device",
+    "dummy_plain": f"{DUMMY_PLUGIN_MODULE}:plain",
+    "dummy_qoala": f"{DUMMY_PLUGIN_MODULE}:for_qoala",
+    "dummy_typo": f"{DUMMY_PLUGIN_MODULE}:typo_in_defaults",
+    "dummy_missing": f"{DUMMY_PLUGIN_MODULE}:no_such_attribute",
+}
+
+
+def write_distribution(root, name: str, version: str,
+                       entry_points: Dict[str, str],
+                       modules: Optional[Dict[str, str]] = None) -> None:
+    """
+    Lay out an installed distribution under ``root``, as pip would.
+
+    ``importlib.metadata`` finds a distribution by its ``.dist-info``
+    directory on ``sys.path``; this writes one with the given
+    ``netqmpi.plugins`` entry points, plus the modules they point to.
+
+    Args:
+        root: Directory that is (or will be) on ``sys.path``.
+        name: Distribution name, e.g. ``"netqmpi-dummy"``.
+        version: Distribution version.
+        entry_points: Entry-point name to ``module:attribute``.
+        modules: Module name to source, written next to the metadata.
+    """
+    info = root / f"{name.replace('-', '_')}-{version}.dist-info"
+    info.mkdir(parents=True)
+    (info / "METADATA").write_text(
+        f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n")
+    lines = "".join(f"{key} = {value}\n" for key, value in entry_points.items())
+    (info / "entry_points.txt").write_text(f"[netqmpi.plugins]\n{lines}")
+    for module, source in (modules or {}).items():
+        (root / f"{module}.py").write_text(textwrap.dedent(source))
+
+
+@pytest.fixture
+def install_plugins(tmp_path, monkeypatch):
+    """
+    Install the dummy plugin distribution ``netqmpi-dummy`` 1.2.3.
+
+    It goes into a directory of its own on ``sys.path``, standing in for
+    ``site-packages``, so the plugins are found from any working directory
+    and never from the test's own.
+
+    Returns:
+        ``install(root=None, name=..., version=..., entry_points=..., modules=...)``
+        to install further distributions; called with no arguments it
+        installs nothing more and returns the dummy plugin module's name.
+    """
+    site = tmp_path / "site-packages"
+    site.mkdir()
+    write_distribution(site, "netqmpi-dummy", "1.2.3", DUMMY_ENTRY_POINTS,
+                       {DUMMY_PLUGIN_MODULE: DUMMY_PLUGIN_SOURCE})
+    monkeypatch.syspath_prepend(str(site))
+
+    def install(**distribution):
+        if distribution:
+            write_distribution(site, **distribution)
+        return DUMMY_PLUGIN_MODULE
+
+    yield install
+    # The module records calls; the next test must import a fresh one.
+    sys.modules.pop(DUMMY_PLUGIN_MODULE, None)
