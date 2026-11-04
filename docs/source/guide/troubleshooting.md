@@ -97,6 +97,12 @@ forever. Now the first failure ends the run with that rank's exception.
 **NetQASM with two transfers in a row between the same ranks (0.3.1 and earlier).**
 See [classical sockets](../backends/netqasm.md#classical-sockets).
 
+**NetQASM with a receiver that already holds a qubit (0.3.1 and earlier).** A
+`qrecv` into a rank holding a live qubit, or a `qgather`, hung on some shots
+after the NetSquid thread printed `ValueError: qubit_mapping [0, 0] contains
+duplicate entries` or `KeyError: 0`. See
+[transfers](../backends/netqasm.md#transfers).
+
 **Finding out where it is stuck.** Have Python dump every thread's stack after a
 while:
 

@@ -228,7 +228,7 @@ Only **CUNQA** implements all three families today.
 | Primitive | CUNQA | NetQASM | Aer | Qoala |
 |---|:--:|:--:|:--:|:--:|
 | `qsend` / `qrecv` | ✅ | ✅ | ⚠️ SWAP-based | ✅ |
-| `qscatter` / `qgather` | ✅ | ❌ | ❌ | ❌ |
+| `qscatter` / `qgather` | ✅ | ✅ | ❌ | ❌ |
 | `expose` / `unexpose` | ✅ | ❌ | ❌ | ❌ |
 
 On CUNQA the telegate window is expanded by

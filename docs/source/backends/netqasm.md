@@ -66,9 +66,8 @@ swap is still assembled from three CNOTs.
 
 | Primitive | Status |
 |---|---|
-| `qsend` / `qrecv` | ✅ teleportation over EPR sockets |
-| `qscatter` | ✅ via the teledata blocks the SDK records it as |
-| `qgather` | ⚠️ aborts — see below |
+| `qsend` / `qrecv` | ✅ teleportation over EPR sockets — see [Transfers](#transfers) |
+| `qscatter` / `qgather` | ✅ via the teledata blocks the SDK records them as |
 | `expose` / `unexpose` | ❌ `NotImplementedError` |
 | `reset` | ❌ `NotImplementedError` |
 | `barrier` | ❌ `NotImplementedError` |
@@ -77,20 +76,6 @@ swap is still assembled from three CNOTs.
 Gates: `H` `X` `Y` `Z` `S` `T` `SWAP`, plus `RX` `RY` `RZ`; controlled `X` and
 `Z`. `SDG`, `TDG` and the controlled phase family raise — NetQASM has no
 controlled-rotation instruction.
-
-:::{caution}
-`qgather` still aborts. `3_scatter` reproduces CUNQA's reference output
-exactly, but `4_gather` — where the root receives several qubits into one
-register — dies inside NetQASM's own teardown:
-
-```text
-_free_physical_qubit: self._used_physical_qubit_addresses.remove(...)
-KeyError: 0
-```
-
-a physical qubit freed twice. It is the same family as the allocation race
-fixed below, reached by a pattern the fix does not cover.
-:::
 
 :::{admonition} What was fixed
 :class: note
@@ -224,6 +209,33 @@ Each rank opens EPR sockets only towards its **peers** — the ranks its traced
 program sends to or receives from. A chain therefore sets up O(n) EPR circuits
 instead of O(n²), which matters because each set-up runs under SquidASM's
 wall-clock timeout (see [scale limits](#scale-limits-and-the-squidasm-workarounds)).
+
+### Transfers
+
+A `qsend`/`qrecv` pair teleports its qubits one at a time:
+
+1. The receiver flushes the instructions it has queued, so every qubit it
+   already holds is allocated on its node, and sends `Ready` to the sender.
+2. The sender waits for `Ready`, creates an EPR pair with the receiver, measures
+   its qubit against its half in the Bell basis and sends the two outcomes.
+3. The receiver keeps its half, applies the corrections, and the corrected half
+   becomes the slot.
+
+`qscatter` and `qgather` are recorded as these same transfers.
+
+The `Ready` message keeps the receiver's memory consistent. SquidASM's link
+layer reserves the memory position for the receiver's half as soon as it serves
+the sender's request, but the receiver's NetQASM executor only records that
+position when its own `recv_keep` is processed, and counts it as free until
+then. In 0.3.1 and earlier, where the sender did not wait, a qubit the receiver
+allocated in that gap was given the same position. The first gate joining the
+two then failed with `ValueError: qubit_mapping [0, 0] contains duplicate
+entries`, and the root of `4_gather`, which holds its own qubit while it
+receives from every other rank, ended with NetQASM freeing one position twice
+(`KeyError: 0`). Both errors are raised in the NetSquid thread, so the run hung
+instead of failing. They did not happen on every shot, because they depended on
+how the sender's request raced the receiver's own instructions. The handshake
+costs one classical message per transferred qubit.
 
 ### Classical sockets
 

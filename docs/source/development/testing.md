@@ -72,7 +72,7 @@ gate.
 | `test_aer_primitives.py` | execution | Qiskit Aer | 62 | Every gate and every primitive, run end to end |
 | `test_aer_transfers.py` | execution | Qiskit Aer | 13 | Cross-rank ordering regressions in the joint translation pass |
 | `test_examples.py` | execution | Qiskit Aer | 7 | The five shipped examples, against their documented output |
-| `test_netqasm_backend.py` | execution | SquidASM + NetSquid | 8 | The NetQASM adapter (marked `integration`) |
+| `test_netqasm_backend.py` | execution | SquidASM + NetSquid | 17 | The NetQASM adapter (marked `integration`), including runs that used to hang: transfers into a rank that already holds qubits, `4_gather`, a rank failing mid-simulation |
 | `test_netqasm_plugin.py` | execution | SquidASM + NetSquid | 31 | Simulation plugins on the NetQASM backend: precedence of `run_defaults`, `configure` before tracing, the two example plugins |
 | `test_qoala_backend.py` | execution | qoala-sim + NetSquid | 9 | The Qoala adapter's gate table |
 
