@@ -110,8 +110,8 @@ Not every backend implements every operation. The SDK accepts all of them at
 trace time; a backend that cannot express one reports it at translation time.
 
 Legend: **✅** supported · **❌** raises `NotImplementedError` ·
-**⚠️** see the note · **∅** *silently ignored* — no instruction is emitted and
-no error is raised.
+**⚠️** see the note. No backend drops an operation silently: one it cannot
+express raises `NotImplementedError`.
 
 | Operation | CUNQA | NetQASM | Aer | Qoala |
 |---|:--:|:--:|:--:|:--:|
@@ -120,7 +120,7 @@ no error is raised.
 | `rx` `ry` `rz` | ✅ | ⚠️ [^nqrot] | ✅ | ⚠️ [^qrot] |
 | `swap` | ✅ | ✅ | ✅ | ❌ |
 | `cx` `cz` | ✅ | ✅ | ✅ | ❌ [^qctrl] |
-| `cs` `ct` `cp` | ✅ | ❌ [^nqctrl] | ∅ [^aerctrl] | ❌ [^qctrl] |
+| `cs` `ct` `cp` | ✅ | ❌ [^nqctrl] | ✅ [^aerctrl] | ❌ [^qctrl] |
 | `crz` | ✅ | ❌ [^nqctrl] | ✅ | ⚠️ [^qctrl] |
 | `ccx` | ✅ | ❌ [^nqctrl] | ✅ | ❌ |
 | `measure` `measure_all` | ✅ | ✅ | ✅ | ✅ |
@@ -144,8 +144,9 @@ no error is raised.
     applies to an exposed control as well, so a telegate on NetQASM is a `cx`
     or a `cz`.
 
-[^aerctrl]: The Aer adapter handles controlled `X`, `Z` and `RZ`. A controlled
-    `S`, `T` or `P` matches no branch and is dropped without warning.
+[^aerctrl]: The Aer adapter handles controlled `X` (one or two controls), `Z`
+    and `RZ`, and a single-control `S`, `T` or `P` as a controlled phase. Any
+    other controlled gate raises `NotImplementedError`.
 
 [^qctrl]: The Qoala adapter maps controlled-`RX` to `cnot` and controlled-`RZ` to
     `cphase`. Since `cx` records a controlled-`X` and `cz` a controlled-`Z`,

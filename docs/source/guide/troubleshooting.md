@@ -119,10 +119,10 @@ The portability matrix (`pytest -m slow`) does this for every case it runs.
 
 ### A gate seems to do nothing
 
-Some adapters ignore gate names they do not know instead of raising. A
-`cs`/`ct`/`cp` on Aer is dropped without warning. Check the
+An operation an adapter cannot express should raise `NotImplementedError`,
+naming the operation and the backend. If a gate seems to do nothing, check the
 [backend support matrix](circuits.md#backend-support-matrix) before assuming the
-physics is wrong.
+physics is wrong, and report it as a bug if the adapter dropped it silently.
 
 ### `comm.results` is empty
 

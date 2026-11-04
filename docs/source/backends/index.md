@@ -50,8 +50,7 @@ SWAP.
 | Noise **by default** | — | none (ideal) | none | none (ideal) |
 | Runs without special hardware | ❌ needs SLURM | ✅ | ✅ | ✅ |
 
-The per-gate breakdown, including which operations are *silently ignored* rather
-than rejected, is in the
+The per-gate breakdown is in the
 [gate support matrix](../guide/circuits.md#backend-support-matrix).
 
 :::{important}

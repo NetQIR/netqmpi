@@ -241,28 +241,10 @@ at n=8, q=2 and hung at n=12 (not investigated).
 
 ## Known gaps the suite pins
 
-Two tests are expected to fail today. They use `xfail(strict=True)`, so the day
-the underlying issue is fixed the suite turns **red** and the marker has to be
-removed — the tests are reminders, not silence.
-
-:::{admonition} Aer drops the controlled-phase family
-:class: warning
-
-`test_aer_primitives.py::test_controlled_phase_gates_reach_the_simulator`
-
-The Aer adapter's controlled-gate table handles `X`, `Z` and `RZ` only.
-{meth}`~netqmpi.sdk.circuit.Circuit.cs`, {meth}`~netqmpi.sdk.circuit.Circuit.ct`
-and {meth}`~netqmpi.sdk.circuit.Circuit.cp` record a controlled `S`, `T` or `P`,
-none of which the table names, and `_translate_controlled_gate` ends without
-emitting anything — **no error, no gate**. CUNQA raises `NotImplementedError`
-for a gate it does not know; Aer stays quiet.
-
-It matters beyond the gate table: `examples/5_qft_expose.py` builds its rotations
-out of `cp`, so on Aer that example runs with every rotation missing. It still
-passes its own test, because on the all-zero input every control is `|0⟩` and the
-rotations would be no-ops anyway — which is exactly why this gap needs a test of
-its own.
-:::
+No test is marked `xfail` at the moment. One known gap is pinned by a test that
+asserts the **current** behaviour, so it is visible instead of being discovered
+from an unhelpful traceback, and the test has to change on the day the gap is
+fixed:
 
 :::{admonition} `simulate()` has no reachable default backend
 :class: warning
@@ -273,10 +255,12 @@ its own.
 when it is called with no executor, but `cli.py` never imports that name — the
 `--netqasm` branch imports it locally, inside `main()`. Calling `simulate()`
 from Python without an executor therefore raises `NameError`. The CLI itself is
-unaffected, since it always passes one. That test pins the current behaviour
-rather than the intended one, so it is visible instead of being discovered from
-an unhelpful traceback.
+unaffected, since it always passes one.
 :::
+
+A gap that cannot be fixed with the change that finds it is pinned with
+`pytest.mark.xfail(strict=True, reason="…")` instead: the suite then turns
+**red** the day the underlying issue is fixed, and the marker has to be removed.
 
 ## Adding a test
 
