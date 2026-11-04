@@ -228,6 +228,15 @@ Add the name to `KNOWN_BACKENDS` in {mod}`netqmpi.runtime.run_config` so a
 `mybackend:` block in a config file is recognised as a backend block rather than
 merged into the generic settings.
 
+`_build_config` builds the config with a single `MyRunConfig.from_dict` call,
+with the command-line overrides already merged in, so validation in
+`__post_init__` sees the final values. It refuses `--plugin` and
+`--plugin-config` unless `MyRunConfig` has a `plugin` field. A backend that
+gains [simulation plugins](../backends/netqasm-plugins.md) adds `plugin` and
+`plugin_config` fields and uses the helpers of {mod}`netqmpi.plugins` (`load`,
+`run_defaults`, `check_backend`, `configure`) as `NetQASMRunConfig` does, so a
+plugin's `backends` attribute can tell the two apart.
+
 ## Checklist
 
 - [ ] Every `_translate_*` hook either implemented or raising `NotImplementedError`

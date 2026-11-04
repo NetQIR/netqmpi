@@ -21,10 +21,24 @@ netqmpi -n 2 app.py --netqasm --config config.yaml   # with the plugin
 netqmpi -n 2 app.py --netqasm                        # without it, to compare
 ```
 
+or install it as a plugin package and select it by name from any directory:
+
+```bash
+pip install ./readout_error
+netqmpi --list-plugins
+netqmpi -n 2 readout_error/app.py --netqasm --plugin readout_error \
+        --plugin-config readout_error/params.yaml
+```
+
 Each directory holds:
 
-- the plugin, a single module whose entry point the config file names;
+- the plugin, a single module whose entry point the config file names, with
+  the optional `configure` (its checks, run before any rank is traced) and
+  `backends`;
 - `config.yaml`, with the `plugin` and its `plugin_config`;
+- `params.yaml`, the same `plugin_config` alone, for `--plugin-config`;
+- `pyproject.toml`, which registers the plugin in the `netqmpi.plugins`
+  entry-point group when the directory is installed;
 - `app.py`, a NetQMPI program whose output shows what the plugin changes.
 
 Both need SquidASM 0.13 and run with NetQASM 2.x (`--netqasm`) or 1.x

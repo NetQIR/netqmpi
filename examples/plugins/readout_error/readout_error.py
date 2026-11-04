@@ -26,7 +26,7 @@ run. Nodes with NV hardware keep their executor unchanged.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from typing import Any, Iterator, Mapping
+from typing import Any, Dict, Iterator, Mapping
 
 from netqasm.lang.instr.flavour import VanillaFlavour
 from netsquid.util.simtools import get_random_state
@@ -57,6 +57,12 @@ def readout_error(config: Mapping[str, Any]):
             Validating here, before anything is patched, reports a typo in
             the config file instead of silently ignoring it.
     """
+    probs = _probabilities(config)
+    return _readout_error(probs["prob_error_0"], probs["prob_error_1"])
+
+
+def _probabilities(config: Mapping[str, Any]) -> Dict[str, float]:
+    """Check ``plugin_config`` and return both probabilities."""
     unknown = set(config) - set(KEYS)
     if unknown:
         raise ValueError(f"readout_error: unknown keys {sorted(unknown)}; "
@@ -67,7 +73,16 @@ def readout_error(config: Mapping[str, Any]):
         if not 0.0 <= value <= 1.0:
             raise ValueError(f"readout_error: {key} must be in [0, 1], got {value}.")
         probs[key] = value
-    return _readout_error(probs["prob_error_0"], probs["prob_error_1"])
+    return probs
+
+
+# Optional members of the plugin contract (netqmpi.plugins.Plugin), which a
+# plain function can carry as attributes. NetQMPI calls ``configure`` when the
+# config is built, so a typo in plugin_config is reported before any rank is
+# traced instead of after; and ``backends`` refuses the plugin on any backend
+# but the one whose internals it replaces.
+readout_error.configure = lambda plugin_config, run_config: _probabilities(plugin_config)
+readout_error.backends = ("netqasm",)
 
 
 @contextmanager

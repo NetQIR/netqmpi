@@ -18,6 +18,7 @@ from netqasm.runtime.app_config import AppConfig
 from netqasm.util.yaml import load_yaml
 from netqasm.runtime.settings import Formalism
 
+from netqmpi import plugins
 from netqmpi.runtime.adapters.netqasm import _simulation
 from netqmpi.runtime.adapters.netqasm._compat import require_major
 
@@ -63,12 +64,16 @@ class NetQASMRunConfig(RunConfig):
             ``FileExistsError``. When on, each run logs to a directory of its
             own under ``./log`` unless ``log_cfg.log_dir`` names one.
         hardware: SquidASM node hardware, ``"generic"`` or ``"nv"``.
-        plugin: ``"module:callable"`` naming code that customises the
-            SquidASM simulation, for hardware or links SquidASM cannot
-            describe on its own. The module is imported as ``python -m``
+        plugin: Code that customises the SquidASM simulation, for hardware
+            or links SquidASM cannot describe on its own: the short name of
+            an installed plugin (an entry point in the ``netqmpi.plugins``
+            group), or ``"module:callable"``, imported as ``python -m``
             would, the working directory first. The callable is given
             ``plugin_config`` and returns a context manager, entered around
-            the simulation and exited after it.
+            the simulation and exited after it. Its optional members are
+            honoured as :class:`netqmpi.plugins.Plugin` describes:
+            ``run_defaults`` by :meth:`from_dict`, ``backends`` and
+            ``configure`` when the config is built.
         plugin_config: Mapping handed to ``plugin`` untouched; NetQMPI does
             not read it.
         network_config: Path to a NetQASM network YAML describing the
@@ -119,6 +124,32 @@ class NetQASMRunConfig(RunConfig):
     argv = None
     roles: str = "roles.yaml"
 
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "NetQASMRunConfig":
+        """
+        Build a config from a plain dict, under the plugin's ``run_defaults``.
+
+        The precedence is: dataclass default < the plugin's ``run_defaults``
+        < ``data``. ``data`` holds only the keys the user set, in the config
+        file or on the command line, so a plugin's default replaces this
+        class's own and nothing the user chose.
+
+        Args:
+            data: Mapping of field names to values.
+
+        Returns:
+            The config.
+
+        Raises:
+            ValueError: On an unknown key, or a plugin that cannot be loaded
+                or whose ``run_defaults`` this config does not accept.
+        """
+        spec = data.get("plugin")
+        if spec is not None:
+            defaults = plugins.run_defaults(_simulation.load_plugin(spec), spec, cls)
+            data = {**defaults, **data}
+        return super().from_dict(data)
+
     def __post_init__(self) -> None:
         if isinstance(self.formalism, str):
             try:
@@ -127,10 +158,12 @@ class NetQASMRunConfig(RunConfig):
                 raise ValueError(
                     f"Unknown formalism {self.formalism!r}; expected one of "
                     f"{[f.value for f in Formalism]}.") from None
+        plugin = None
         if self.plugin is not None:
             # Imported now so a wrong name stops the run before any circuit
             # is traced, not at the end of it.
-            _simulation.load_plugin(self.plugin)
+            plugin = _simulation.load_plugin(self.plugin)
+            plugins.check_backend(plugin, self.plugin, "netqasm")
         elif self.plugin_config is not None:
             raise ValueError("plugin_config is given but no plugin to hand it to.")
         if self.plugin_config is not None and not isinstance(self.plugin_config, Mapping):
@@ -148,6 +181,11 @@ class NetQASMRunConfig(RunConfig):
         if self.epr_setup_timeout <= 0:
             raise ValueError(
                 f"epr_setup_timeout must be positive, got {self.epr_setup_timeout}.")
+        if plugin is not None:
+            # Last, so the plugin checks a config NetQMPI has already
+            # validated, and before tracing, so a typo among its parameters
+            # does not wait for every rank to finish.
+            plugins.configure(plugin, self)
 
 # ---------------------------------------------------------------------------
 # Concrete Executor

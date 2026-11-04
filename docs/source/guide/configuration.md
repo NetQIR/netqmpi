@@ -55,7 +55,8 @@ ValueError: Unknown config keys for CunqaRunConfig: ['simulater']
 | `shots` | int | `1024` | Number of times the program is repeated |
 
 `--shots` on the command line overrides whatever the file says, so a quick run
-can bump the shot count without editing the file.
+can bump the shot count without editing the file. `--plugin` and
+`--plugin-config` override `plugin` and `plugin_config` in the same way.
 
 ## `cunqa` block
 
@@ -149,7 +150,7 @@ no separate readout-flip model.
 | `log_cfg` | Any | `None` | NetQASM log configuration |
 | `roles` | str | `"roles.yaml"` | Roles configuration file |
 | `post_function` | callable | `None` | Function invoked after the simulation |
-| `plugin` | str | `None` | `"module:callable"` naming a [simulation plugin](../backends/netqasm-plugins.md) |
+| `plugin` | str | `None` | Installed plugin's short name or `"module:callable"` naming a [simulation plugin](../backends/netqasm-plugins.md); its `run_defaults` replace this block's defaults |
 | `plugin_config` | mapping | `None` | Parameters handed to the plugin, unread by NetQMPI |
 
 Several of these (`network_config`, `log_cfg`, `post_function`) hold objects

@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import argparse
 import textwrap
+from dataclasses import dataclass
+from typing import Any, Dict, Optional
 
 import pytest
 
@@ -97,9 +99,10 @@ def test_load_main_validates_the_path(path, match):
 # _build_config
 # ----------------------------------------------------------------------
 
-def args(config=None, shots=None):
+def args(config=None, shots=None, plugin=None, plugin_config=None):
     """The slice of the parsed CLI arguments the config builder reads."""
-    return argparse.Namespace(config=config, shots=shots)
+    return argparse.Namespace(config=config, shots=shots, plugin=plugin,
+                              plugin_config=plugin_config)
 
 
 def test_without_a_config_file_the_defaults_apply():
@@ -180,6 +183,14 @@ def test_simulate_without_an_executor_is_currently_broken(tmp_path):
 # Argument parsing and backend selection
 # ----------------------------------------------------------------------
 
+@dataclass
+class FakeNetQASMConfig(RunConfig):
+    """The fields of ``NetQASMRunConfig`` the CLI itself sets."""
+    netqasm_major: int = 2
+    plugin: Optional[str] = None
+    plugin_config: Optional[Dict[str, Any]] = None
+
+
 class FakeExecutor:
     """Stands in for a backend adapter, so no simulator has to be installed."""
 
@@ -217,7 +228,8 @@ def fake_backends(monkeypatch):
     for backend, (_, executor_name, config_name) in BACKENDS.items():
         module = types.ModuleType(f"netqmpi.runtime.adapters.{backend}")
         setattr(module, executor_name, FakeExecutor)
-        setattr(module, config_name, RunConfig)
+        setattr(module, config_name,
+                FakeNetQASMConfig if backend == "netqasm" else RunConfig)
         monkeypatch.setitem(sys.modules, f"netqmpi.runtime.adapters.{backend}", module)
 
 
@@ -360,3 +372,111 @@ def test_a_missing_config_file_is_a_usage_error(tmp_path, fake_backends,
         cli.main()
     assert exit_info.value.code == 2
     assert "absent.yaml" in capsys.readouterr().err
+
+
+# ----------------------------------------------------------------------
+# Simulation plugins on the command line
+# ----------------------------------------------------------------------
+
+def test_squidasm_is_an_alias_of_netqasm(tmp_path, fake_backends, captured_run):
+    """The simulator users think of is SquidASM; the flag says the same."""
+    call = captured_run("-n", "2", write_app(tmp_path), "--squidasm")
+    assert isinstance(call["executor"].config, FakeNetQASMConfig)
+    assert call["executor"].config.netqasm_major == 2
+
+
+def test_plugin_flags_win_over_the_config_file(tmp_path, fake_backends,
+                                               captured_run):
+    """``--plugin`` and ``--plugin-config`` override the file, as ``--shots`` does."""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("netqasm:\n  plugin: from_file\n"
+                           "  plugin_config:\n    x: 1\n")
+    plugin_config = tmp_path / "params.yaml"
+    plugin_config.write_text("y: 2\n")
+    script = write_app(tmp_path)
+
+    from_file = captured_run("-n", "2", script, "--netqasm",
+                             "--config", str(config_file))["executor"].config
+    assert (from_file.plugin, from_file.plugin_config) == ("from_file", {"x": 1})
+
+    overridden = captured_run("-n", "2", script, "--netqasm",
+                              "--config", str(config_file),
+                              "--plugin", "from_cli",
+                              "--plugin-config", str(plugin_config))
+    config = overridden["executor"].config
+    assert (config.plugin, config.plugin_config) == ("from_cli", {"y": 2})
+
+
+def test_an_empty_plugin_config_file_is_an_empty_mapping(tmp_path,
+                                                         fake_backends,
+                                                         captured_run):
+    """Given on purpose, so it is not the same as no ``--plugin-config`` at all."""
+    plugin_config = tmp_path / "params.yaml"
+    plugin_config.write_text("")
+    call = captured_run("-n", "1", write_app(tmp_path), "--netqasm",
+                        "--plugin", "p", "--plugin-config", str(plugin_config))
+    assert call["executor"].config.plugin_config == {}
+
+
+def test_a_plugin_config_file_that_is_not_a_mapping_is_a_usage_error(
+        tmp_path, fake_backends, monkeypatch, capsys):
+    plugin_config = tmp_path / "params.yaml"
+    plugin_config.write_text("- 0.1\n- 0.2\n")
+    monkeypatch.setattr("sys.argv", ["netqmpi", "-n", "1", write_app(tmp_path),
+                                     "--netqasm", "--plugin", "p",
+                                     "--plugin-config", str(plugin_config)])
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main()
+    assert exit_info.value.code == 2
+    err = capsys.readouterr().err
+    assert "params.yaml" in err and "mapping" in err
+
+
+@pytest.mark.parametrize("backend", ["aer", "cunqa", "qoala"])
+@pytest.mark.parametrize("flag", ["--plugin", "--plugin-config"])
+def test_plugin_flags_are_refused_by_a_backend_without_plugins(
+        backend, flag, tmp_path, fake_backends, monkeypatch, capsys):
+    """
+    ``--aer --plugin nv_2026`` would otherwise run an ideal simulation.
+
+    The user would believe they had simulated the plugin's hardware, so the
+    flag is refused, naming the backend, instead of being ignored.
+    """
+    plugin_config = tmp_path / "params.yaml"
+    plugin_config.write_text("x: 1\n")
+    value = "nv_2026" if flag == "--plugin" else str(plugin_config)
+    monkeypatch.setattr("sys.argv", ["netqmpi", "-n", "2", write_app(tmp_path),
+                                     BACKENDS[backend][0], flag, value])
+
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main()
+    assert exit_info.value.code == 2
+    err = capsys.readouterr().err
+    assert f"{flag} is not supported by the {backend} backend" in err
+
+
+def test_list_plugins_names_each_plugin_its_target_and_distribution(
+        install_plugins, monkeypatch, capsys):
+    """Works without ``-n`` or a script, like ``--version``."""
+    module = install_plugins()
+    monkeypatch.setattr("sys.argv", ["netqmpi", "--list-plugins"])
+
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main()
+    assert exit_info.value.code == 0
+    lines = capsys.readouterr().out.splitlines()
+    device = [line for line in lines if line.split()[:1] == ["dummy_device"]]
+    assert len(device) == 1, lines
+    assert f"{module}:device" in device[0]
+    assert "netqmpi-dummy 1.2.3" in device[0]
+
+
+def test_list_plugins_says_when_none_is_installed(monkeypatch, capsys):
+    from netqmpi import plugins
+    monkeypatch.setattr(plugins, "installed", lambda: [])
+    monkeypatch.setattr("sys.argv", ["netqmpi", "--list-plugins"])
+
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main()
+    assert exit_info.value.code == 0
+    assert "No NetQMPI plugins are installed" in capsys.readouterr().out

@@ -1,0 +1,6 @@
+# The plugin's parameters alone, for --plugin-config; the same values as
+# plugin_config in config.yaml.
+#
+#   netqmpi -n 2 app.py --netqasm --plugin readout_error --plugin-config params.yaml
+prob_error_0: 0.05                  # a 0 reads as 1
+prob_error_1: 0.20                  # a 1 reads as 0

@@ -28,6 +28,13 @@ Command-line interface
    :undoc-members:
    :show-inheritance:
 
+Simulation plugins
+------------------
+
+.. automodule:: netqmpi.plugins
+   :members:
+   :show-inheritance:
+
 Helpers
 -------
 

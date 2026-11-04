@@ -129,6 +129,14 @@ def gate_noise(config: Mapping[str, Any]):
     return _gate_noise(GateNoise.from_dict(config))
 
 
+# Optional members of the plugin contract (netqmpi.plugins.Plugin), which a
+# plain function can carry as attributes: ``configure`` checks plugin_config
+# when the config is built, before any rank is traced, and ``backends``
+# refuses the plugin on any backend but the one whose internals it replaces.
+gate_noise.configure = lambda plugin_config, run_config: GateNoise.from_dict(plugin_config)
+gate_noise.backends = ("netqasm",)
+
+
 def build_qdevice(params: GateNoise, name: str = "QDevice", num_qubits: int = 5,
                   mem_fidelities: Optional[list] = None,
                   **_: Any) -> QuantumProcessor:
