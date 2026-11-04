@@ -29,6 +29,16 @@ class QMPICommunicator(ABC):
     - ``rank`` and ``size`` properties.
     - Context-manager support for connection lifecycle handling.
     - Utility helpers for rank naming and neighbor traversal.
+
+    Attributes:
+        circuits: The circuits this rank created, in creation order.
+        results: Measurement counts, filled by the backend after the run.
+            Their shape differs per backend.
+        metrics: What the run measured besides the outcomes (simulated
+            time, entanglement statistics, ...), filled by the backend when
+            it has something to report and empty otherwise. Entries are
+            grouped by who produced them, for example ``metrics["netqmpi"]``
+            and ``metrics["plugin"]``.
     """
 
     def __init__(self, rank: int, size: int) -> None:
@@ -43,6 +53,7 @@ class QMPICommunicator(ABC):
         self._size = size
         self.circuits: List[Circuit] = []
         self.results: Dict = {}
+        self.metrics: Dict[str, Any] = {}
 
     # ------------------------------------------------------------------
     # Properties
