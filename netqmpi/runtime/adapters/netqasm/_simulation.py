@@ -18,7 +18,9 @@ Everything here runs once per NetQMPI run, from the last rank's
   wall-clock timeout that SquidASM hard-codes and a busy wait, and a backend
   thread that SquidASM leaves running when a program fails.
 * :func:`plugin_context` runs the user's plugin, if the config names one,
-  around the simulation.
+  around the simulation, and :func:`plugin_metrics` reads what it reports.
+* :func:`sim_time` and :func:`shot_times` measure the simulated time of
+  each shot.
 
 SquidASM is imported lazily and only by the workarounds, so the rest of this
 module works against NetQASM alone (the ``debug`` simulator included).
@@ -33,7 +35,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import (
     TYPE_CHECKING, Any, Callable, ContextManager, Dict, Iterable, Iterator, List,
-    Optional,
+    Mapping, Optional, Tuple,
 )
 
 from netqasm.runtime.interface.config import (
@@ -261,18 +263,115 @@ def load_plugin(spec: str) -> Callable[[Dict[str, Any]], ContextManager]:
 
 
 @contextmanager
-def plugin_context(config: "NetQASMRunConfig") -> Iterator[None]:
+def plugin_context(config: "NetQASMRunConfig") -> Iterator[Any]:
     """
     Run the plugin the config names, if any, around the simulation.
 
     Args:
         config: Run configuration providing ``plugin`` and ``plugin_config``.
+
+    Yields:
+        What the plugin's context manager yields: ``None``, a mapping it
+        fills during the run, or an object with ``report()``. See
+        :func:`plugin_metrics`. ``None`` when there is no plugin.
+
+    Raises:
+        TypeError: If the plugin yields anything else. Checked on entry,
+            before the simulation, rather than after it.
     """
     if config.plugin is None:
-        yield
+        yield None
         return
-    with load_plugin(config.plugin)(config.plugin_config or {}):
-        yield
+    with load_plugin(config.plugin)(config.plugin_config or {}) as yielded:
+        if not (yielded is None or isinstance(yielded, Mapping)
+                or callable(getattr(yielded, "report", None))):
+            raise TypeError(
+                f"Plugin {config.plugin!r} yielded a "
+                f"{type(yielded).__name__}; a plugin's context manager must "
+                f"yield None, a mapping of metrics, or an object with a "
+                f"report() method returning one.")
+        yield yielded
+
+
+def plugin_metrics(spec: str, yielded: Any) -> Optional[Dict[str, Any]]:
+    """
+    Read the metrics a plugin reports, once the simulation has succeeded.
+
+    Never called after a failed simulation, so neither a half-filled report
+    nor an error in ``report()`` can hide the error of the run.
+
+    Args:
+        spec: The ``"module:callable"`` naming the plugin, for messages.
+        yielded: What :func:`plugin_context` yielded.
+
+    Returns:
+        A copy of the plugin's metrics, or ``None`` if it reports none.
+
+    Raises:
+        RuntimeError: If ``report()`` raises, chained to its error.
+        TypeError: If ``report()`` does not return a mapping.
+    """
+    if yielded is None:
+        return None
+    if isinstance(yielded, Mapping):
+        return dict(yielded)
+    try:
+        report = yielded.report()
+    except Exception as error:
+        raise RuntimeError(
+            f"The simulation succeeded, but report() of plugin {spec!r} "
+            f"raised {type(error).__name__}: {error}") from error
+    if not isinstance(report, Mapping):
+        raise TypeError(
+            f"report() of plugin {spec!r} returned a "
+            f"{type(report).__name__}, not a mapping of metrics.")
+    return dict(report)
+
+
+def sim_time() -> Optional[float]:
+    """
+    Return NetSquid's simulated time, in ns.
+
+    Returns:
+        The current simulated time, or ``None`` outside NetSquid (NetQASM's
+        ``debug`` simulator, say).
+    """
+    try:
+        import netsquid
+    except ImportError:
+        return None
+    return float(netsquid.sim_time())
+
+
+def shot_times(spans: Iterable[List[Tuple[float, float]]]) -> List[float]:
+    """
+    Turn the time spans of every program into the simulated time of each shot.
+
+    A shot lasts from the moment the *last* program had its connection and
+    EPR sockets ready, which is when the whole network is set up, to the
+    moment the last program finished. Ranks set up one after another as
+    their threads get to it, and simulated time runs on meanwhile; starting
+    at the first rank ready would count that stagger as the program's.
+    Local work a rank does before the last rank is ready is not counted.
+    The result is never negative: the last rank ready ends after it starts.
+
+    Args:
+        spans: One list per program, holding the ``(start, end)`` simulated
+            times of each shot, in shot order.
+
+    Returns:
+        The duration of each shot in ns; empty when any program has no
+        complete record (outside NetSquid, or after a failed shot).
+    """
+    spans = list(spans)
+    if not spans:
+        return []
+    shots = len(spans[0])
+    if any(len(program) != shots for program in spans):
+        return []
+    return [max(program[shot][1] for program in spans)
+            - max(program[shot][0] for program in spans)
+            for shot in range(shots)]
 
 
 def stop_backend() -> None:
