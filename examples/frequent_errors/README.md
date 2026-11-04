@@ -39,6 +39,12 @@ circuits actually run come out clean there, and the harness says so.
 | `gather_disagreeing_chunks.py` | Ranks disagree on the chunk size | translation | the same check, as a count: `rank 1 traced 2 qsends to rank 0, and rank 0 traced 1 qrecv from rank 1` |
 | `exceeds_qpu_qubits.py` | Circuit needs more qubits than the vQPU has | run | CUNQA's `ValueError: Not enough data qubits in the QPU for the circuit.`, naming no rank and no numbers |
 
+The `expose` rows read the same with `--netqasm`, which checks the order of
+the collective calls across ranks before SquidASM starts, except
+`partial_expose_group.py`: its `cs` is reported first there, as
+`NotImplementedError: Controlled-S is not implemented for the NetQASM backend.`
+`test/test_netqasm_adapter.py` runs these examples against the NetQASM adapter.
+
 The three tiers matter more than the individual messages:
 
 - **trace** -- raised at the offending line while the rank's `main()` runs, so

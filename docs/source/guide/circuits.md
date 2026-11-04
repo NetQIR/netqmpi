@@ -118,8 +118,8 @@ no error is raised.
 | `h` `x` `y` `z` `s` `t` | ✅ | ✅ | ✅ | ✅ |
 | `sdg` `tdg` | ✅ | ❌ | ✅ | ✅ |
 | `rx` `ry` `rz` | ✅ | ⚠️ [^nqrot] | ✅ | ⚠️ [^qrot] |
-| `swap` | ✅ | ∅ [^nqswap] | ✅ | ❌ |
-| `cx` `cz` | ✅ | ❌ [^nqctrl] | ✅ | ❌ [^qctrl] |
+| `swap` | ✅ | ✅ | ✅ | ❌ |
+| `cx` `cz` | ✅ | ✅ | ✅ | ❌ [^qctrl] |
 | `cs` `ct` `cp` | ✅ | ❌ [^nqctrl] | ∅ [^aerctrl] | ❌ [^qctrl] |
 | `crz` | ✅ | ❌ [^nqctrl] | ✅ | ⚠️ [^qctrl] |
 | `ccx` | ✅ | ❌ [^nqctrl] | ✅ | ❌ |
@@ -129,7 +129,7 @@ no error is raised.
 | Classically controlled gates | ❌ | ❌ | ❌ | ❌ |
 | `qsend` / `qrecv` | ✅ | ✅ | ⚠️ [^aerswap] | ✅ |
 | `qscatter` / `qgather` | ✅ | ❌ | ❌ | ❌ |
-| `expose` / `unexpose` | ✅ | ❌ | ❌ | ❌ |
+| `expose` / `unexpose` | ✅ | ✅ | ✅ | ❌ |
 
 [^nqrot]: The NetQASM adapter emits `rot_X(n=round(theta), d=16)`, i.e. an angle
     of `round(theta)·π/2¹⁶`. Rotation angles are therefore **not** faithfully
@@ -138,13 +138,11 @@ no error is raised.
 [^qrot]: Discretised to multiples of π/16 (`rot_* Q n 4`). Angles that are not a
     multiple of π/16 are rounded to the nearest one.
 
-[^nqswap]: `swap` is not in the NetQASM adapter's single-qubit gate map, and the
-    adapter ignores names it does not know instead of raising, so the gate is
-    dropped without warning.
-
-[^nqctrl]: The NetQASM adapter looks up `op.name` on a `ControlledGate`, which has
-    no such attribute, so **every** controlled gate raises
-    `AttributeError: 'ControlledGate' object has no attribute 'name'`.
+[^nqctrl]: The NetQASM adapter emits single-control `X` and `Z` only. Any other
+    controlled gate, or one with several controls, raises
+    `NotImplementedError`: NetQASM has no controlled-rotation instruction. This
+    applies to an exposed control as well, so a telegate on NetQASM is a `cx`
+    or a `cz`.
 
 [^aerctrl]: The Aer adapter handles controlled `X`, `Z` and `RZ`. A controlled
     `S`, `T` or `P` matches no branch and is dropped without warning.

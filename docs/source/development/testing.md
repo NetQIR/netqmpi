@@ -72,7 +72,8 @@ gate.
 | `test_aer_primitives.py` | execution | Qiskit Aer | 62 | Every gate and every primitive, run end to end |
 | `test_aer_transfers.py` | execution | Qiskit Aer | 13 | Cross-rank ordering regressions in the joint translation pass |
 | `test_examples.py` | execution | Qiskit Aer | 7 | The five shipped examples, against their documented output |
-| `test_netqasm_backend.py` | execution | SquidASM + NetSquid | 8 | The NetQASM adapter (marked `integration`) |
+| `test_netqasm_adapter.py` | runtime | NetQASM | 42 | What the NetQASM adapter decides before SquidASM runs: network, capacity, EPR peers, logging, failures, and the cross-rank check of `expose`/`unexpose` |
+| `test_netqasm_backend.py` | execution | SquidASM + NetSquid | 23 | The NetQASM adapter end to end, telegate windows included (marked `integration`) |
 | `test_netqasm_plugin.py` | execution | SquidASM + NetSquid | 31 | Simulation plugins on the NetQASM backend: precedence of `run_defaults`, `configure` before tracing, the two example plugins |
 | `test_qoala_backend.py` | execution | qoala-sim + NetSquid | 9 | The Qoala adapter's gate table |
 
@@ -225,6 +226,15 @@ pytest -m slow           # the matrix
 
 It exists because none of the failures the multi-backend benchmark found shows
 up with one qubit per rank and at most three ranks.
+
+The same sizes run a telegate echo on every backend that implements `expose`
+(Aer and NetQASM): rank 0 lends `|+⟩` to every other rank, a window applies a
+`cx` and a `cz` from it to each receiver qubit, a second window undoes them,
+and every rank must read all-zeros — rank 0 included, which it only does if
+each window gave its phase back. `qft_telegate` cannot play that role on
+NetQASM because it needs controlled-P. On NetQASM the echo runs up to n=4
+only: with NetQASM 1.x it also passed at n=8, q=1, but the process was killed
+at n=8, q=2 and hung at n=12 (not investigated).
 
 ## Known gaps the suite pins
 

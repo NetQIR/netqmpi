@@ -69,14 +69,56 @@ swap is still assembled from three CNOTs.
 | `qsend` / `qrecv` | ✅ teleportation over EPR sockets |
 | `qscatter` | ✅ via the teledata blocks the SDK records it as |
 | `qgather` | ⚠️ aborts — see below |
-| `expose` / `unexpose` | ❌ `NotImplementedError` |
+| `expose` / `unexpose` | ✅ cat-entangler / cat-disentangler over EPR sockets — see [Telegate windows](#telegate-windows) |
 | `reset` | ❌ `NotImplementedError` |
 | `barrier` | ❌ `NotImplementedError` |
 | Classically controlled gates | ❌ `NotImplementedError` |
 
 Gates: `H` `X` `Y` `Z` `S` `T` `SWAP`, plus `RX` `RY` `RZ`; controlled `X` and
 `Z`. `SDG`, `TDG` and the controlled phase family raise — NetQASM has no
-controlled-rotation instruction.
+controlled-rotation instruction. That holds inside a telegate window too: an
+exposed control drives `cx` and `cz`, so `examples/5_qft_expose.py`, which uses
+`cp`, still does not run here.
+
+### Telegate windows
+
+NetQASM runs one program per rank, so unlike CUNQA and Aer there is no joint
+expansion: every participant emits its own half of the protocol, as `qsend` and
+`qrecv` do.
+
+**`expose`** opens the window as a star, one receiver at a time, in the order
+the window lists them. The receiver first tells the root it is ready, once the
+qubits it already holds are committed: SquidASM's link layer picks the memory
+position of the receiver's half when the root's request arrives, and a local
+qubit allocated after that could be given the same position (`qubit_mapping
+[0, 0] contains duplicate entries`). The root then creates an EPR pair with the
+receiver, applies
+`CNOT(data, half)`, measures its half and sends the outcome; the receiver keeps
+the other half as its communication qubit and applies `X` if the outcome is 1.
+This leaves α|0⟩|0…0⟩ + β|1⟩|1…1⟩ over the root's data qubit and the receivers'
+communication qubits, while the root holds one extra EPR half at a time rather
+than one per receiver.
+
+**`unexpose`** closes it: each receiver measures its communication qubit in the
+X basis and sends the outcome to the root, which applies `Z` to its data qubit
+if the outcomes have odd parity.
+
+A window costs one EPR pair per receiver, plus three classical messages: the
+ready signal and one outcome bit each way. Its
+communication qubit is held for as long as the window is open, which the
+[capacity check](#configuration) counts: a receiver needs its live data qubits
+plus one qubit for every window it is receiving, the root its live data qubits
+plus the EPR half it is measuring. With noise configured, that is also the time
+the exposed control has to decohere.
+
+Because the ranks run independently, an `expose` that a participant never
+reaches — or reaches after a different window — would leave the others waiting
+inside SquidASM. Before simulating, the adapter replays the order of every
+rank's `expose`/`unexpose` calls and refuses a program in which some cannot
+complete, with the same deadlock report as CUNQA (see
+[Troubleshooting](../guide/troubleshooting.md)). Transfers are not part of that
+check. Each telegate message carries the window's tag, and a message from a
+different call raises instead of being applied as a correction.
 
 :::{caution}
 `qgather` still aborts. `3_scatter` reproduces CUNQA's reference output
@@ -176,8 +218,9 @@ netqasm:
 ```
 
 Before simulating, the adapter checks that every rank fits in its node — its
-live data qubits plus the EPR half it holds while transferring — and refuses the
-run otherwise, naming the rank, what it needs and what the node has:
+live data qubits plus the EPR half it holds while transferring or opening a
+window, plus a communication qubit per open window it receives — and refuses
+the run otherwise, naming the rank, what it needs and what the node has:
 
 ```text
 ValueError: The simulated network is too small for this program:
@@ -221,7 +264,8 @@ empty qubit slots, or a qubit the program never measured would survive the round
 and be reused dead by the next one.
 
 Each rank opens EPR sockets only towards its **peers** — the ranks its traced
-program sends to or receives from. A chain therefore sets up O(n) EPR circuits
+program sends to or receives from, and, for a telegate window, the root and
+each of its receivers. A chain therefore sets up O(n) EPR circuits
 instead of O(n²), which matters because each set-up runs under SquidASM's
 wall-clock timeout (see [scale limits](#scale-limits-and-the-squidasm-workarounds)).
 
