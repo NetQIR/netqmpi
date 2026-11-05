@@ -18,8 +18,8 @@ collective for the user, since every rank has to call them, but each rank's
 half is a sequence of ordinary teledata blocks that CUNQA pairs up by tag
 at run time, so they need no joint expansion.
 """
-import os, sys
-sys.path.append(os.getenv("HOME"))
+from netqmpi.helpers import ensure_cunqa_importable
+ensure_cunqa_importable()
 
 from collections import Counter
 from typing import Any, Dict, List, Optional, Tuple

@@ -1,7 +1,8 @@
+import importlib.util
 import os
 import sys
 import types
-from typing import Dict, Tuple
+from typing import Dict, Mapping, Tuple
 
 #: Compiled app scripts, keyed by ``(absolute path, mtime_ns, size)``.
 _CODE_CACHE: Dict[Tuple[str, int, int], types.CodeType] = {}
@@ -87,3 +88,28 @@ def load_main(path):
             raise ValueError(f"main function not found in {path}")
 
     return namespace["main"]
+
+
+def ensure_cunqa_importable(environ: Mapping[str, str] = os.environ) -> None:
+    """
+    Make ``cunqa`` importable for the CUNQA adapters.
+
+    A ``cunqa`` that is already imported, installed or on ``PYTHONPATH`` is
+    left alone; a bare ``cunqa/`` directory without ``__init__.py`` does not
+    count, since it would only be a namespace package. Otherwise ``NETQMPI_CUNQA_PATH`` and then ``HOME`` are
+    appended to ``sys.path``, whichever are set and not there yet. The
+    adapters always looked in ``HOME``, so installs that rely on it keep
+    working with no setup.
+
+    Args:
+        environ: Environment to read the candidate paths from.
+    """
+    if "cunqa" in sys.modules:
+        return
+    spec = importlib.util.find_spec("cunqa")
+    if spec is not None and spec.loader is not None:
+        return
+    for name in ("NETQMPI_CUNQA_PATH", "HOME"):
+        path = environ.get(name)
+        if path and path not in sys.path:
+            sys.path.append(path)

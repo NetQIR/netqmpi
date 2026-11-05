@@ -87,6 +87,28 @@ def test_every_call_records_the_operation_it_promises(method, args, expected,
     assert circuit.ops.children == [expected]
 
 
+def test_cp_takes_its_angle_as_theta(make_circuit):
+    """The keyword is part of the API: callers may name the angle."""
+    circuit = make_circuit(num_qubits=2, num_clbits=0)
+    circuit.cp(0, 1, theta=THETA)
+    assert circuit.ops.children == [ControlledGate([0], [Gate("P", [1], [THETA])])]
+
+
+def test_cp_is_defined_once():
+    """A second definition silently replaces the first, docstring and all."""
+    import ast
+    import inspect
+
+    import netqmpi.sdk.circuit as module
+
+    tree = ast.parse(inspect.getsource(module))
+    circuit = next(node for node in tree.body
+                   if isinstance(node, ast.ClassDef) and node.name == "Circuit")
+    names = [node.name for node in circuit.body
+             if isinstance(node, ast.FunctionDef)]
+    assert names.count("cp") == 1
+
+
 def test_measure_pairs_the_indices_it_was_given(make_circuit):
     """A qubit may be measured into any classical bit, not just its own."""
     circuit = make_circuit(num_qubits=3, num_clbits=3)

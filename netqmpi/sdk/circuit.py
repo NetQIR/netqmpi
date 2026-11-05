@@ -656,22 +656,6 @@ class Circuit(ABC):
         self._check_qubit(target)
         return self._add(ControlledGate([control], [Gate('T', [target])]))
     
-    def cp(self, control: int, target: int, beta: float) -> Circuit:
-        """
-        Apply a controlled-P gate.
-
-        Args:
-            control: Control qubit index.
-            target: Target qubit index.
-            beta: angle applied by the P gate.
-
-        Returns:
-            The current circuit instance.
-        """
-        self._check_qubit(control)
-        self._check_qubit(target)
-        return self._add(ControlledGate([control], [Gate('P', [target], [beta])]))
-
     def swap(self, qubit1: int, qubit2: int) -> Circuit:
         """
         Apply a SWAP gate between two qubits.

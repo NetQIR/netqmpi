@@ -118,6 +118,10 @@ def simulate(
         timer: If ``True``, print the wall-clock execution time.
     """
     if executor is None:
+        # Imported here, like the backend branches of main(), so this module
+        # stays free of backend imports.
+        from netqmpi.runtime.adapters.netqasm import NetQASMExecutorAdapter
+
         executor = NetQASMExecutorAdapter(size=num_procs)
 
     if timer:

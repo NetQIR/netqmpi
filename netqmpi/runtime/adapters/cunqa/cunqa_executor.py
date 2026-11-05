@@ -20,8 +20,10 @@ the configuration picks between them:
   with is the ``backend`` setting, so the qubit budget of the run is under
   the user's control.
 """
-import os, sys
-sys.path.append(os.getenv("HOME"))
+import os
+
+from netqmpi.helpers import ensure_cunqa_importable
+ensure_cunqa_importable()
 
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
