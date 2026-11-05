@@ -580,6 +580,76 @@ def test_a_telegate_message_for_another_call_is_refused():
         adapter._receive(_Socket("Corrections", [0, 1]), "expose t", 0)
 
 
+class _TransferComm(_Comm):
+    """A peer whose socket hands out one message and records what is sent."""
+
+    def __init__(self, header, payload):
+        self.socket = _Socket(header, payload)
+        self.socket.sent = []
+        self.socket.send_structured = self.socket.sent.append
+
+    def get_socket(self, my_rank, other_rank):
+        return self.socket
+
+    def get_epr_socket(self, my_rank, other_rank):
+        class _EPRSocket:
+            def recv_keep(self):
+                raise AssertionError("no pair before the corrections check")
+
+            def create_keep(self):
+                raise AssertionError("no pair before Ready")
+        return _EPRSocket()
+
+    def flush(self):
+        pass
+
+
+def test_a_transfer_message_is_returned_as_sent():
+    """The corrections keep their shape; only telegate outcomes are ints."""
+    adapter = _bare_adapter()
+    payload = adapter._receive_payload(_Socket("Corrections", (1, 0)),
+                                       "Corrections", 0)
+    assert tuple(payload) == (1, 0)
+
+
+def test_a_sender_refuses_anything_but_ready():
+    """
+    A qsend reading another call's message raises before requesting a pair.
+
+    It used to read the next message whatever it was, so a telegate outcome
+    taken for the receiver's Ready was silently lost.
+    """
+    from types import SimpleNamespace
+    adapter = _bare_adapter()
+    adapter._comm = _TransferComm("expose t", 1)
+    adapter._qubits = [object(), None]
+    adapter._translated_ops = []
+    adapter._translate_qsend(SimpleNamespace(dest_rank=0, qubits=[0]))
+    with pytest.raises(RuntimeError, match=r"rank 1 expected the 'Ready' "
+                                           r"outcome from rank 0 but received "
+                                           r"'expose t'"):
+        adapter._translated_ops[0]()
+
+
+def test_a_receiver_refuses_anything_but_corrections():
+    """A qrecv reading another call's message raises instead of applying it."""
+    from types import SimpleNamespace
+    adapter = _bare_adapter()
+    comm = adapter._comm = _TransferComm("expose t", 1)
+
+    class _EPRSocket:
+        def recv_keep(self):
+            return [object()]
+    comm.get_epr_socket = lambda my_rank, other_rank: _EPRSocket()
+    adapter._translated_ops = []
+    adapter._translate_qrecv(SimpleNamespace(src_rank=0, qubits=[0]))
+    with pytest.raises(RuntimeError, match=r"rank 1 expected the 'Corrections' "
+                                           r"outcome from rank 0 but received "
+                                           r"'expose t'"):
+        adapter._translated_ops[0]()
+    assert [m.header for m in comm.socket.sent] == ["Ready"]
+
+
 def test_an_empty_comm_qubit_is_not_silently_reallocated():
     """A comm slot with no control raises rather than becoming a fresh |0>."""
     adapter = _bare_adapter()

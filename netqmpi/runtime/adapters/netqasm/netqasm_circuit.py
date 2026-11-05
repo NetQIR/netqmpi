@@ -417,7 +417,7 @@ class NetQASMCircuitAdapter(Circuit):
                 qubit = self._qubit(q_idx)
                 # No pair is requested until the receiver has committed the
                 # qubits it already holds; see qrecv.
-                socket.recv_structured()
+                self._receive_payload(socket, "Ready", op.dest_rank)
                 # Create EPR pair
                 epr = epr_socket.create_keep()[0]
                 # Bell measurement
@@ -472,7 +472,7 @@ class NetQASMCircuitAdapter(Circuit):
                 self._comm.flush()
 
                 # Receive corrections
-                m1, m2 = socket.recv_structured().payload
+                m1, m2 = self._receive_payload(socket, "Corrections", op.src_rank)
                 if m2 == 1:
                     epr.X()
                 if m1 == 1:
@@ -633,12 +633,6 @@ class NetQASMCircuitAdapter(Circuit):
         """
         Receive one telegate outcome and check it belongs to this call.
 
-        The messages between two ranks share one socket per round and arrive
-        in the order they were sent, so a header that does not match means
-        the two ranks reached their calls in different orders. Reading the
-        bit anyway would apply another call's correction and return a
-        plausible, wrong histogram.
-
         Args:
             socket: Classical socket to the peer.
             header: Header the expected message carries.
@@ -650,6 +644,29 @@ class NetQASMCircuitAdapter(Circuit):
         Raises:
             RuntimeError: If the message is not the one this call expects.
         """
+        return int(self._receive_payload(socket, header, peer))
+
+    def _receive_payload(self, socket: Socket, header: str, peer: int) -> Any:
+        """
+        Receive one protocol message and check it belongs to this call.
+
+        The messages between two ranks share one socket per round and arrive
+        in the order they were sent, so a header that does not match means
+        the two ranks reached their calls in different orders. Reading the
+        payload anyway would apply another call's correction and return a
+        plausible, wrong histogram.
+
+        Args:
+            socket: Classical socket to the peer.
+            header: Header the expected message carries.
+            peer: Rank at the other end, for the error message.
+
+        Returns:
+            The message's payload, as sent.
+
+        Raises:
+            RuntimeError: If the message is not the one this call expects.
+        """
         message = socket.recv_structured()
         if message.header != header:
             raise RuntimeError(
@@ -657,7 +674,7 @@ class NetQASMCircuitAdapter(Circuit):
                 f"rank {peer} but received {message.header!r} "
                 f"({message.payload!r}): the two ranks reached their transfers "
                 f"and telegate windows in different orders.")
-        return int(message.payload)
+        return message.payload
 
     def translate(self, op: Operation) -> Any:
         """
