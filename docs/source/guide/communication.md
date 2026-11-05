@@ -223,12 +223,14 @@ caught at translation time, as a deadlock report naming who is missing — see
 
 ## Backend support
 
-Only **CUNQA** implements all three families today.
+CUNQA and NetQASM implement all three families. Aer does too, but its
+transfers are an unphysical SWAP rather than a teleportation; Qoala implements
+transfers only.
 
 | Primitive | CUNQA | NetQASM | Aer | Qoala |
 |---|:--:|:--:|:--:|:--:|
 | `qsend` / `qrecv` | ✅ | ✅ | ⚠️ SWAP-based | ✅ |
-| `qscatter` / `qgather` | ✅ | ✅ | ❌ | ❌ |
+| `qscatter` / `qgather` | ✅ | ✅ | ✅ | ❌ |
 | `expose` / `unexpose` | ✅ | ✅ | ✅ | ❌ |
 
 On CUNQA the telegate window is expanded by

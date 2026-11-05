@@ -118,22 +118,22 @@ express raises `NotImplementedError`.
 | `h` `x` `y` `z` `s` `t` | ✅ | ✅ | ✅ | ✅ |
 | `sdg` `tdg` | ✅ | ❌ | ✅ | ✅ |
 | `rx` `ry` `rz` | ✅ | ⚠️ [^nqrot] | ✅ | ⚠️ [^qrot] |
-| `swap` | ✅ | ✅ | ✅ | ❌ |
-| `cx` `cz` | ✅ | ✅ | ✅ | ❌ [^qctrl] |
+| `swap` | ✅ | ✅ | ✅ | ✅ |
+| `cx` `cz` | ✅ | ✅ | ✅ | ✅ |
 | `cs` `ct` `cp` | ✅ | ❌ [^nqctrl] | ✅ [^aerctrl] | ❌ [^qctrl] |
-| `crz` | ✅ | ❌ [^nqctrl] | ✅ | ⚠️ [^qctrl] |
+| `crz` | ✅ | ❌ [^nqctrl] | ✅ | ❌ [^qctrl] |
 | `ccx` | ✅ | ❌ [^nqctrl] | ✅ | ❌ |
 | `measure` `measure_all` | ✅ | ✅ | ✅ | ✅ |
 | `reset` | ✅ | ❌ | ✅ | ❌ |
 | `barrier` | ❌ | ❌ | ✅ | ❌ |
 | Classically controlled gates | ❌ | ❌ | ❌ | ❌ |
 | `qsend` / `qrecv` | ✅ | ✅ | ⚠️ [^aerswap] | ✅ |
-| `qscatter` / `qgather` | ✅ | ✅ | ❌ | ❌ |
+| `qscatter` / `qgather` | ✅ | ✅ | ✅ | ❌ |
 | `expose` / `unexpose` | ✅ | ✅ | ✅ | ❌ |
 
-[^nqrot]: The NetQASM adapter emits `rot_X(n=round(theta), d=16)`, i.e. an angle
-    of `round(theta)·π/2¹⁶`. Rotation angles are therefore **not** faithfully
-    reproduced on this backend.
+[^nqrot]: The NetQASM adapter passes the angle to the SDK's `rot_X`/`rot_Y`/`rot_Z`,
+    which approximate it by a sequence of rotations by `n·π/2ᵈ`, to within
+    10⁻⁴ rad. The angle is therefore discretised, not reproduced exactly.
 
 [^qrot]: Discretised to multiples of π/16 (`rot_* Q n 4`). Angles that are not a
     multiple of π/16 are rounded to the nearest one.
@@ -148,9 +148,9 @@ express raises `NotImplementedError`.
     and `RZ`, and a single-control `S`, `T` or `P` as a controlled phase. Any
     other controlled gate raises `NotImplementedError`.
 
-[^qctrl]: The Qoala adapter maps controlled-`RX` to `cnot` and controlled-`RZ` to
-    `cphase`. Since `cx` records a controlled-`X` and `cz` a controlled-`Z`,
-    neither matches; `crz` maps to `cphase`, discarding its angle.
+[^qctrl]: The Qoala adapter emits single-control `X` (`cnot`) and `Z` (`cphase`)
+    only. A `crz` raises rather than becoming a `cphase` that would ignore its
+    angle, and so does any other controlled gate.
 
 [^aerswap]: Supported in the default `transfer_mode="swap"`, which inserts an
     unphysical SWAP rather than modelling a real transfer.

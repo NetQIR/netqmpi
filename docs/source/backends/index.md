@@ -22,15 +22,15 @@ models hardware or links SquidASM's configuration cannot describe.
 :gutter: 2
 
 :::{grid-item-card} Start here
-**CUNQA** is the reference backend. It is the only one implementing the whole
-primitive set — transfers, rooted collectives and the telegate window — and the
-one the shipped examples are written against.
+**CUNQA** is the reference backend, and the one the shipped examples are
+written against. It implements the whole primitive set — transfers, rooted
+collectives and the telegate window.
 :::
 
 :::{grid-item-card} No cluster at hand?
 **Aer** is the lightest option and the only one with no special installation
-requirements, but it supports point-to-point transfers only, via an unphysical
-SWAP.
+requirements. It runs every primitive, but its transfers are an unphysical SWAP
+rather than a teleportation.
 :::
 
 ::::
