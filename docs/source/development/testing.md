@@ -241,10 +241,25 @@ at n=8, q=2 and hung at n=12 (not investigated).
 
 ## Known gaps the suite pins
 
-No test is marked `xfail` at the moment. One known gap is pinned by a test that
-asserts the **current** behaviour, so it is visible instead of being discovered
-from an unhelpful traceback, and the test has to change on the day the gap is
-fixed:
+:::{admonition} NetQASM `ghz` beyond its validated scale
+:class: warning
+
+`test_portability_matrix.py::test_app_returns_all_zeros[netqasm-ghz-n8-q2]`,
+`[netqasm-ghz-n12-q1]` and `[netqasm-ghz-n12-q2]`
+
+These three cases hang past their 900 s deadline: they lie beyond the sizes
+`ghz` is known to run on NetQASM (q=1 up to n=7, q=2 up to n=3; see
+[Validated scale](../backends/index.md#validated-scale)). They were measured on
+NetQASM 2.x with and without the transfer handshake of #34 and hang the same way
+both times, so the cause is elsewhere and not yet investigated. They are marked
+`xfail(run=False)`: they stay in the matrix, reported as `XFAIL [NOTRUN]`,
+without spending 45 minutes on every `pytest -m slow`. Because they are not run,
+the marker does not turn red when they are fixed: run them by removing it.
+:::
+
+Another known gap is pinned by a test that asserts the **current** behaviour,
+so it is visible instead of being discovered from an unhelpful traceback, and
+the test has to change on the day the gap is fixed:
 
 :::{admonition} `simulate()` has no reachable default backend
 :class: warning
@@ -261,6 +276,7 @@ unaffected, since it always passes one.
 A gap that cannot be fixed with the change that finds it is pinned with
 `pytest.mark.xfail(strict=True, reason="…")` instead: the suite then turns
 **red** the day the underlying issue is fixed, and the marker has to be removed.
+Only a case that would hang, like the three above, is marked `run=False`.
 
 ## Adding a test
 

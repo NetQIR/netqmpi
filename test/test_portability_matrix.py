@@ -84,6 +84,19 @@ def available(backend: str) -> bool:
     return all(importlib.util.find_spec(name) is not None for name in needs)
 
 
+#: Cases known to hang, kept in the matrix so their ids stay visible but not
+#: run: each would burn its whole deadline. Measured on NetQASM 2.x, both with
+#: and without the receiver's Ready handshake (#34), so the handshake is not
+#: what stops them.
+KNOWN_HANGS = {
+    ("netqasm", "ghz", 8, 2), ("netqasm", "ghz", 12, 1), ("netqasm", "ghz", 12, 2),
+}
+KNOWN_HANG_REASON = (
+    "hangs past the 900 s deadline: beyond NetQASM's validated scale for ghz "
+    "(q=1 up to n=7, q=2 up to n=3), and hangs the same way without the #34 "
+    "transfer handshake")
+
+
 def cases():
     """Every (backend, app, ranks, qubits) the matrix covers."""
     portable = {"aer": ["cascade", "ghz", "qft", "qft_telegate"],
@@ -102,7 +115,11 @@ def cases():
                         width = ranks * (qubits + (app == "qft"))
                         if width > AER_MAX_STATEVECTOR:
                             continue
-                    yield pytest.param(backend, app, ranks, qubits, marks=marks,
+                    case_marks = list(marks)
+                    if (backend, app, ranks, qubits) in KNOWN_HANGS:
+                        case_marks.append(pytest.mark.xfail(
+                            run=False, reason=KNOWN_HANG_REASON))
+                    yield pytest.param(backend, app, ranks, qubits, marks=case_marks,
                                        id=f"{backend}-{app}-n{ranks}-q{qubits}")
 
 
