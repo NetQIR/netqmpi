@@ -55,6 +55,33 @@ particular platform (colour-centre processors with heralded double-click links,
 for instance) can be developed, versioned and shared on its own, and every
 NetQMPI program can run on it by changing its configuration file.
 
+## Official plugins
+
+The official plugins live in a separate repository,
+[NetQIR/netqmpi-plugins](https://github.com/NetQIR/netqmpi-plugins), where you
+can see which ones are available. Each directory there is one plugin and one
+installable distribution, so you install only the plugin you use.
+
+| Plugin | Entry points | Backend |
+|---|---|---|
+| [NV / SnV colour centres](https://github.com/NetQIR/netqmpi-plugins/tree/main/color-centers), with heralded double-click links, telegates and link metrics | `nv_2026`, `snv_2026`, `color_centers` | NetQASM |
+
+The colour-centre plugin is the example this guide follows: the snippets that
+name `nv_2026` and `netqmpi-colorcenters` refer to it. It was created in
+collaboration with the COMPUTAEX team, Jesús Cerrudo Herrera, Rodrigo Gallardo
+Tena and Pablo Polo Alcántara, whose work on diamond colour centres in NetSquid
+is at
+[Diamond-color-centers-emulation-on-NetSquid](https://github.com/rodrigt11/Diamond-color-centers-emulation-on-NetSquid).
+
+Install it as the repository's README describes, from a clone of
+`netqmpi-plugins`, in the environment that runs the NetQASM backend, and check
+that NetQMPI sees it:
+
+```bash
+pip install -e color-centers --no-deps
+netqmpi --list-plugins
+```
+
 ## Using a plugin
 
 `plugin` names the plugin, and `plugin_config` is an arbitrary mapping that
