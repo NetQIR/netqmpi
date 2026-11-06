@@ -1,5 +1,6 @@
 import importlib.util
 import os
+import re
 import sys
 
 from setuptools import setup, find_packages
@@ -7,6 +8,44 @@ from setuptools.command.build_py import build_py
 from setuptools.command.sdist import sdist
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+REPOSITORY = 'https://github.com/NetQIR/netqmpi'
+
+
+def _long_description():
+    """
+    Read the README for the PyPI page, with relative links made absolute.
+
+    PyPI shows the README outside the repository, so a relative image or link
+    (``examples/``, ``LICENSE``, the architecture picture) would be broken
+    there. Images point to the raw file and everything else to the page on
+    GitHub.
+    """
+    with open(os.path.join(HERE, 'README.md'), encoding='utf-8') as handle:
+        text = handle.read()
+
+    def absolute(target):
+        return not re.match(r'(?:[a-z][a-z0-9+.-]*:|#|/)', target, re.I)
+
+    def image(match):
+        target = match.group(2)
+        if not absolute(target):
+            return match.group(0)
+        raw = REPOSITORY.replace('github.com', 'raw.githubusercontent.com')
+        return '%s%s/refs/heads/main/%s%s' % (
+            match.group(1), raw, target.lstrip('./'), match.group(3))
+
+    def link(match):
+        target = match.group(2)
+        if not absolute(target):
+            return match.group(0)
+        return '%s%s/blob/main/%s%s' % (
+            match.group(1), REPOSITORY, target.lstrip('./'), match.group(3))
+
+    text = re.sub(r'(<img[^>]*\bsrc=")([^"]+)(")', image, text)
+    text = re.sub(r'(\]\()([^)\s]+)(\))', link, text)
+    return text
 
 
 def _version_module():
@@ -87,7 +126,16 @@ setup(
     author='F. Javier Cardama',
     author_email='javier.cardama@usc.es',
     description='A high-level abstraction layer similar to MPI for distributed quantum programming over NetQASM.',
-    url='https://github.com/NetQIR/netqmpi',  # Replace with your project's URL
+    long_description=_long_description(),
+    long_description_content_type='text/markdown',
+    url=REPOSITORY,
+    project_urls={
+        'Documentation': 'https://netqir.github.io/netqmpi/',
+        'Source': REPOSITORY,
+        'Issues': REPOSITORY + '/issues',
+        'Plugins': 'https://github.com/NetQIR/netqmpi-plugins',
+    },
+    keywords='quantum distributed-quantum-computing mpi netqasm squidasm cunqa qiskit',
     classifiers=[
         'Programming Language :: Python :: 3',
         'License :: OSI Approved :: Apache Software License',
