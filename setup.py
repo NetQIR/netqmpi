@@ -67,7 +67,7 @@ class SdistWithBuildInfo(sdist):
 
 setup(
     name='netqmpi',
-    version='0.3.1',
+    version='0.4.0',
     cmdclass={
         'build_py': BuildPyWithBuildInfo,
         'sdist': SdistWithBuildInfo,
