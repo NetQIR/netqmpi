@@ -90,8 +90,9 @@ setup(
     url='https://github.com/NetQIR/netqmpi',  # Replace with your project's URL
     classifiers=[
         'Programming Language :: Python :: 3',
-        'License :: OSI Approved :: MIT License',
+        'License :: OSI Approved :: Apache Software License',
         'Operating System :: OS Independent',
     ],
+    license='Apache-2.0',
     python_requires='>=3.6',
 )

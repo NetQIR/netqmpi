@@ -38,6 +38,7 @@ API reference.
 - [Writing a new backend](#writing-a-new-backend)
 - [Examples](#examples)
 - [Cite this work](#cite-this-work)
+- [License](#license)
 
 ## Architecture: a decoupled design
 
@@ -478,3 +479,11 @@ If you use **NetQMPI** in your research, please cite the following works:
 > DOI: [10.1016/j.future.2025.107989](https://doi.org/10.1016/j.future.2025.107989)
 
 ---
+
+## License
+
+NetQMPI is released under the [Apache License 2.0](LICENSE).
+
+The NetQASM and Qoala backends use [NetSquid](https://netsquid.org), which is
+not part of NetQMPI and is distributed under its own end-user license
+conditions, accepted when you request access to it.
