@@ -13,6 +13,8 @@ reference backend, and the one the shipped examples are written against.
 - **Package:** [`cunqa`](https://github.com/CESGA-Quantum-Spain/cunqa)
 - **Requires:** SLURM — a real cluster, or the container below on one machine
 - **Adapter:** {mod}`netqmpi.runtime.adapters.cunqa`
+- **Finding `cunqa`:** an installed `cunqa` (or one on `PYTHONPATH`) is used
+  as is; otherwise the adapter looks in `NETQMPI_CUNQA_PATH`, then in `HOME`
 
 ## Trying it on a laptop
 

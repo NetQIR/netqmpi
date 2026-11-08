@@ -160,22 +160,38 @@ def test_the_timer_reports_the_wall_clock(tmp_path, capsys):
     assert capsys.readouterr().out == ""
 
 
-def test_simulate_without_an_executor_is_currently_broken(tmp_path):
-    """
-    The documented default backend is unreachable.
+def test_simulate_without_an_executor_falls_back_to_netqasm(tmp_path,
+                                                            fake_backends,
+                                                            monkeypatch):
+    """The documented default backend is the one that runs."""
+    import sys
 
-    :func:`~netqmpi.runtime.cli.simulate` falls back to
-    ``NetQASMExecutorAdapter`` when no executor is given, but ``cli.py``
-    never imports that name — the CLI's own ``--netqasm`` branch imports it
-    locally, inside :func:`~netqmpi.runtime.cli.main`. Calling
-    ``simulate()`` from Python with no executor therefore raises
-    ``NameError`` instead of running anything.
+    calls = []
 
-    This test pins the current behaviour rather than the intended one, so
-    that it is visible instead of being discovered from an unhelpful
-    traceback. Fixing the import is what should make it change.
-    """
-    with pytest.raises(NameError, match="NetQASMExecutorAdapter"):
+    class RecordingExecutor(FakeExecutor):
+        def build_apps(self, file, size):
+            calls.append((file, size))
+            return []
+
+        def run(self, apps):
+            calls.append("ran")
+
+    monkeypatch.setattr(sys.modules["netqmpi.runtime.adapters.netqasm"],
+                        "NetQASMExecutorAdapter", RecordingExecutor)
+    script = write_app(tmp_path)
+
+    cli.simulate(script, num_procs=2)
+
+    assert calls == [(script, 2), "ran"]
+
+
+def test_simulate_without_netqasm_installed_names_it(tmp_path, monkeypatch):
+    """A missing default backend is reported as such, not as a NameError."""
+    import sys
+
+    monkeypatch.setitem(sys.modules, "netqmpi.runtime.adapters.netqasm", None)
+
+    with pytest.raises(ImportError, match="netqasm"):
         cli.simulate(write_app(tmp_path), num_procs=1)
 
 
