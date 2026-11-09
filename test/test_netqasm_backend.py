@@ -371,6 +371,102 @@ def test_two_sends_in_a_row_arrive(tmp_path):
     assert "RESULTS {0: {'00': 2}, 1: {'11': 2}}" in output, output
 
 
+#: The receiver already holds a live qubit when the transfer starts, and the
+#: first gate after it joins the two: |1> received, |1> local, a CNOT leaves
+#: the local one at |0>, so rank 1 reads "01" on every shot.
+RECEIVER_HOLDS_A_QUBIT = """
+    from netqmpi.sdk.environment import Environment
+
+    def main(env: Environment = None):
+        comm, rank = env.comm, env.comm.rank
+        with comm:
+            circuit = env.create_circuit(num_qubits=2, num_clbits=2)
+            if rank == 0:
+                circuit.x(0)
+                comm.qsend(circuit, [0], 1)
+            else:
+                circuit.x(1)
+                comm.qrecv(circuit, [0], 0)
+                circuit.cx(0, 1)
+                circuit.measure(0, 0)
+                circuit.measure(1, 1)
+"""
+
+#: The same collision over a wider register and a chain of three ranks: rank 1
+#: holds a live qubit while it receives two, and then forwards that qubit to
+#: rank 2, which holds a live qubit of its own when it arrives.
+RECEIVERS_HOLD_QUBITS_IN_A_CHAIN = """
+    from netqmpi.sdk.environment import Environment
+
+    def main(env: Environment = None):
+        comm, rank = env.comm, env.comm.rank
+        with comm:
+            circuit = env.create_circuit(num_qubits=3, num_clbits=3)
+            if rank == 0:
+                circuit.x(0)
+                circuit.x(1)
+                comm.qsend(circuit, [0, 1], 1)
+            elif rank == 1:
+                circuit.x(2)
+                comm.qrecv(circuit, [0, 1], 0)
+                circuit.cx(0, 2)            # 1 ^ 1 ^ 1: qubit 2 ends at |1>
+                circuit.cx(1, 2)
+                circuit.measure(0, 0)
+                circuit.measure(1, 1)
+                comm.qsend(circuit, [2], 2)
+            else:
+                circuit.x(1)
+                comm.qrecv(circuit, [0], 1)
+                circuit.cx(0, 1)            # 1 ^ 1: qubit 1 ends at |0>
+                circuit.measure(0, 0)
+                circuit.measure(1, 1)
+"""
+
+
+def test_a_receiver_holding_a_qubit_gets_its_own_position(tmp_path):
+    """
+    #34: the incoming EPR half and a local qubit shared one memory position.
+
+    The link layer picks the receiver's position for the pair as soon as
+    the sender asks for it, and a qubit the receiver had not committed yet
+    could be given that same position; the CNOT after the transfer then
+    failed in the NetSquid thread ("qubit_mapping [0, 0] contains duplicate
+    entries") and the run hung. It raced the sender, a few shots in twenty,
+    so the run is long enough to meet it.
+    """
+    output = run_in_child(RECEIVER_HOLDS_A_QUBIT, 2, tmp_path, shots=20,
+                          timeout=90)
+    assert "duplicate entries" not in output, output
+    assert "RESULTS {0: {'00': 20}, 1: {'01': 20}}" in output, output
+
+
+def test_receivers_holding_qubits_in_a_chain_get_their_own_positions(tmp_path):
+    """#34 with two qubits in one transfer and three ranks."""
+    output = run_in_child(RECEIVERS_HOLD_QUBITS_IN_A_CHAIN, 3, tmp_path,
+                          shots=10, timeout=90)
+    assert "duplicate entries" not in output, output
+    assert ("RESULTS {0: {'000': 10}, 1: {'011': 10}, 2: {'001': 10}}"
+            in output), output
+
+
+@pytest.mark.parametrize("ranks", [3, 4])
+def test_gather_finishes(ranks, tmp_path):
+    """
+    #34 as ``4_gather`` met it: the root holds its own qubit and receives
+    one from every other rank.
+
+    The pair a later sender asked for took a position the root's executor
+    still counted as free, and the run hung on "KeyError: 0" when NetQASM
+    freed that position twice — on most single shots.
+    """
+    app = Path(__file__).resolve().parents[1] / "examples/4_gather.py"
+    output = run_in_child(app, ranks, tmp_path, shots=10, timeout=120)
+    gathered = "1" * ranks
+    contributors = ", ".join(f"{r}: {{'0': 10}}" for r in range(1, ranks))
+    assert (f"RESULTS {{0: {{'{gathered}': 10}}, {contributors}}}"
+            in output), output
+
+
 def test_cascade_with_two_qubits_per_rank_finishes(tmp_path):
     """N1 as the benchmark met it: cascade, n=2, q=2, one shot, under 30 s."""
     app = Path(__file__).resolve().parent / "apps/cascade.py"

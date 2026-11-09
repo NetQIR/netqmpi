@@ -401,6 +401,10 @@ class NetQASMCircuitAdapter(Circuit):
         """
         Translate a quantum send operation into a NetQASM instruction.
 
+        Each qubit is teleported: the sender waits for the receiver's
+        ``Ready`` message, creates an EPR pair with it, Bell-measures the
+        qubit against its half and sends the two outcomes as corrections.
+
         Args:
             op: Quantum send operation to translate.
         """
@@ -411,6 +415,9 @@ class NetQASMCircuitAdapter(Circuit):
 
             for q_idx in op.qubits:
                 qubit = self._qubit(q_idx)
+                # No pair is requested until the receiver has committed the
+                # qubits it already holds; see qrecv.
+                self._receive_payload(socket, "Ready", op.dest_rank)
                 # Create EPR pair
                 epr = epr_socket.create_keep()[0]
                 # Bell measurement
@@ -438,6 +445,10 @@ class NetQASMCircuitAdapter(Circuit):
         """
         Translate a quantum receive operation into a NetQASM instruction.
 
+        For each qubit the receiver commits what it holds, sends ``Ready``
+        to the sender, keeps its half of the EPR pair and applies the
+        corrections it receives; the corrected half becomes the slot.
+
         Args:
             op: Quantum receive operation to translate.
         """
@@ -446,11 +457,22 @@ class NetQASMCircuitAdapter(Circuit):
             socket = self._comm.get_socket(self._comm.rank, op.src_rank)
 
             for q_idx in op.qubits:
+                # Commit the qubits this rank already holds, then tell the
+                # sender it may request the pair. The link layer reserves
+                # the memory position for this node's half as soon as the
+                # sender's request is served, but the executor only learns
+                # of it once recv_keep runs; a local qubit allocated in
+                # between was given that same position, and the first gate
+                # joining the two failed in the NetSquid thread with
+                # "qubit_mapping [0, 0] contains duplicate entries" and hung
+                # the run, a few shots in twenty.
+                self._comm.flush()
+                socket.send_structured(StructuredMessage("Ready", 0))
                 epr = epr_socket.recv_keep()[0]
                 self._comm.flush()
 
                 # Receive corrections
-                m1, m2 = socket.recv_structured().payload
+                m1, m2 = self._receive_payload(socket, "Corrections", op.src_rank)
                 if m2 == 1:
                     epr.X()
                 if m1 == 1:
@@ -611,12 +633,6 @@ class NetQASMCircuitAdapter(Circuit):
         """
         Receive one telegate outcome and check it belongs to this call.
 
-        The messages between two ranks share one socket per round and arrive
-        in the order they were sent, so a header that does not match means
-        the two ranks reached their calls in different orders. Reading the
-        bit anyway would apply another call's correction and return a
-        plausible, wrong histogram.
-
         Args:
             socket: Classical socket to the peer.
             header: Header the expected message carries.
@@ -628,6 +644,29 @@ class NetQASMCircuitAdapter(Circuit):
         Raises:
             RuntimeError: If the message is not the one this call expects.
         """
+        return int(self._receive_payload(socket, header, peer))
+
+    def _receive_payload(self, socket: Socket, header: str, peer: int) -> Any:
+        """
+        Receive one protocol message and check it belongs to this call.
+
+        The messages between two ranks share one socket per round and arrive
+        in the order they were sent, so a header that does not match means
+        the two ranks reached their calls in different orders. Reading the
+        payload anyway would apply another call's correction and return a
+        plausible, wrong histogram.
+
+        Args:
+            socket: Classical socket to the peer.
+            header: Header the expected message carries.
+            peer: Rank at the other end, for the error message.
+
+        Returns:
+            The message's payload, as sent.
+
+        Raises:
+            RuntimeError: If the message is not the one this call expects.
+        """
         message = socket.recv_structured()
         if message.header != header:
             raise RuntimeError(
@@ -635,7 +674,7 @@ class NetQASMCircuitAdapter(Circuit):
                 f"rank {peer} but received {message.header!r} "
                 f"({message.payload!r}): the two ranks reached their transfers "
                 f"and telegate windows in different orders.")
-        return int(message.payload)
+        return message.payload
 
     def translate(self, op: Operation) -> Any:
         """
