@@ -227,6 +227,10 @@ class NetQASMCommunicator(QMPICommunicator):
             try:
                 self._check_collectives()
                 self._simulate(argv_per_rank)
+                counts = {comm.rank: comm.results
+                          for comm in NetQASMCommunicator.communicators}
+                for comm in NetQASMCommunicator.communicators:
+                    comm.counts = counts
             finally:
                 # Class-level state belongs to one run. Leaving it behind
                 # meant a second run in the same process assembled an

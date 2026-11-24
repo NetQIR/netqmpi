@@ -193,12 +193,19 @@ class MyCommunicator(QMPICommunicator):
             registry = dict(MyCommunicator._registry)
             MyCommunicator._registry.clear()
             results = self._executor.run_simulation(registry)
+            counts = {rank: results.get(rank, {}) for rank in sorted(registry)}
             for rank, comm in registry.items():
-                comm.results = results.get(rank, {})
+                comm.results = results.get(rank, {})   # native shape
+                comm.counts = counts                    # portable shape
         return None
 ```
 
-Two rules worth stating explicitly:
+Rules worth stating explicitly:
+
+**Fill `comm.counts` on at least the last rank.** It is every rank's histogram
+keyed by rank — `{rank: {bitstring: count}}`, or a list of histograms for a rank
+that built several circuits — and it is what portable programs print.
+`comm.results` can keep whatever shape is natural for the backend.
 
 **Never swallow an exception raised inside the `with` block.** Return `None`, not
 `True`, and clear any shared state so the next run starts clean.

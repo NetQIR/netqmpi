@@ -333,6 +333,9 @@ bit string per shot, most significant bit first, with unmeasured bits reading
 ```
 
 Unlike CUNQA, it is not keyed by rank and does not carry the other ranks' counts.
+`comm.counts` does: it gathers every rank's histogram, keyed by rank, once the
+simulation is over. A rank that built several circuits counts their shots
+together in one histogram on this backend, not as a list.
 
 ## Metrics
 

@@ -222,3 +222,4 @@ class CunqaCommunicator(QMPICommunicator):
         }
         for rank in ranks:
             communicators[rank].results = session.results
+            communicators[rank].counts = session.results

@@ -123,9 +123,10 @@ import, so you only need the dependencies of the backend you actually run.
 <summary><b>NetQASM / SquidASM backend</b></summary>
 
 ```bash
-pip install squidasm --extra-index-url https://<user>:<pwd>@pypi.netsquid.org
-# pulls in netsquid and netqasm 1.x
+pip install "squidasm>=0.13" "netqasm>=2,<3" --extra-index-url https://<user>:<pwd>@pypi.netsquid.org
+# pulls in netsquid and netqasm 2.x, used by --netqasm
 ```
+For `--netqasm1.0`, build a separate Python 3.8 environment with `netqasm` 1.x.
 See the [NetQASM installation docs](https://netqasm.readthedocs.io/en/stable/installation.html).
 </details>
 
@@ -159,7 +160,7 @@ docker run --rm -it -p 8888:8888 jvazquezperez/cunqa_netqmpi
 SLURM and a Jupyter server on port 8888 (token `cunqa`) come up, and you get a
 shell. It is the real backend, so it also runs out of room like one: a single
 machine tops out around five or six ranks. See the
-[CUNQA backend page](https://netqir.github.io/net-qmpi/backends/cunqa.html) for
+[CUNQA backend page](https://netqir.github.io/netqmpi/backends/cunqa.html) for
 mounting your own checkout and sizing the vQPUs.
 </details>
 
@@ -198,22 +199,23 @@ def main(env: Environment = None):
     previous_rank = comm.get_prev_rank(rank)
 
     with comm:  # everything inside this block is executed on the backend
+        circuit = env.create_circuit(num_qubits=1, num_clbits=1)
         if rank == 0:
-            circuit = env.create_circuit(num_qubits=1, num_clbits=1)
             circuit.h(0)                          # prepare |+>
             comm.qsend(circuit, [0], next_rank)   # teleport the qubit
-        else:
-            circuit = env.create_circuit(num_qubits=1, num_clbits=1)
+        elif rank == 1:
             comm.qrecv(circuit, [0], previous_rank)
             circuit.measure(0, 0)
 
-    results = comm.results
-
-    if rank != 0:
-        print(f"measure: {results}")
-    else:
-        print("teleportation complete")
+    # The last rank to leave the block sees every rank's counts, keyed by rank.
+    if rank == comm.size - 1:
+        for other, counts in comm.counts.items():
+            print(f"rank {other}: {counts}")
 ```
+
+`comm.counts` has the same shape on every backend. `comm.results` is also
+there, in each backend's native shape (on Aer, for instance, one histogram for
+the whole global circuit).
 
 ```bash
 netqmpi -n 2 examples/1_send_recv.py --netqasm
@@ -449,7 +451,8 @@ and separate noise for one- and two-qubit gates.
 
 [`examples/frequent_errors/`](examples/frequent_errors) collects programs that are
 *meant* to fail, one failure mode each, with a `run_all.py` that reports what
-NetQMPI says about every one of them without needing any vQPU.
+NetQMPI says about every one of them without needing any vQPU (CUNQA itself
+must still be importable).
 
 Validation experiments for the Qoala backend (hardware-parameter propagation, EPR
 fidelity sweep, and scheduling/multitasking) are documented in

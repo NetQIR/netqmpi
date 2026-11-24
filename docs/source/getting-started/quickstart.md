@@ -29,16 +29,16 @@ def main(env: Environment = None):
         if rank == 0:
             circuit.h(0)                          # prepare |+>
             comm.qsend(circuit, [0], next_rank)   # and give it away
-        else:
+        elif rank == 1:
             comm.qrecv(circuit, [0], previous_rank)
             circuit.measure(0, 0)
 
     # The circuits of all ranks are submitted together when the last rank
-    # leaves the block, so only that rank sees results here — and it sees
-    # every rank's counts, keyed by rank.
-    if comm.results:
-        for other, counts in comm.results.items():
-            print(f"rank_{other}: {counts}")
+    # leaves the block, so that rank is the one guaranteed to see the
+    # counts — every rank's, keyed by rank.
+    if rank == comm.size - 1:
+        for other, counts in comm.counts.items():
+            print(f"rank {other}: {counts}")
 ```
 
 Three things are worth noticing:
@@ -79,8 +79,8 @@ Output is a **histogram of measurement outcomes per rank**, gathered after all
 ranks have left the `with comm:` block:
 
 ```text
-rank_0: {'0': 1024}
-rank_1: {'0': 517, '1': 507}
+rank 0: {'0': 1024}
+rank 1: {'0': 517, '1': 507}
 ```
 
 Rank 1 measures the `|+⟩` it received in the computational basis, so it reads 0
@@ -88,13 +88,13 @@ and 1 about equally often. Rank 0 reads `0` because handing a qubit over
 **moves** it: a quantum state cannot be copied, so once `qsend` returns, rank 0's
 qubit is back in `|0⟩`.
 
-:::{admonition} Only some ranks see `comm.results`
+:::{admonition} Print from the last rank
 :class: note
 
 Circuits are submitted jointly when the *last* rank leaves its `with comm:`
-block, so `comm.results` is populated on that rank and — depending on the
-backend — possibly not on the others. The `if comm.results:` guard above is the
-idiomatic way to print once. See {ref}`Reading results <reading-results>`.
+block, so `comm.counts` is always populated on that rank and — depending on
+the backend — possibly not on the others. Printing from `rank == comm.size - 1`
+prints once, on every backend. See {ref}`Reading results <reading-results>`.
 :::
 
 ## What to read next

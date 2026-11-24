@@ -91,7 +91,11 @@ def run_example(name: str, ranks: int):
         Environment.__init__ = original
 
     captured.sort(key=lambda env: env.comm.rank)
-    return histograms.per_rank_histograms(captured, "aer")
+    # comm.counts is what the examples print, from the last rank; it has to
+    # agree with splitting the joint histogram independently.
+    counts = captured[-1].comm.counts
+    assert counts == histograms.per_rank_histograms(captured, "aer")
+    return counts
 
 
 def check_silent(histogram) -> None:
@@ -138,11 +142,14 @@ def check_balanced(histogram) -> None:
 # 1 — teleport one qubit from rank 0 to rank 1
 # ----------------------------------------------------------------------
 
-def test_send_recv():
-    """Rank 1 reads the |+> it was given; rank 0 kept nothing to measure."""
-    results = run_example("1_send_recv", 2)
-    check_silent(results[0])
+@pytest.mark.parametrize("ranks", [2, 3, 4])
+def test_send_recv(ranks):
+    """Rank 1 reads the |+> it was given; every other rank measured nothing."""
+    results = run_example("1_send_recv", ranks)
+    assert sorted(results) == list(range(ranks))
     check_balanced(results[1])
+    for rank in set(range(ranks)) - {1}:
+        check_silent(results[rank])
 
 
 # ----------------------------------------------------------------------

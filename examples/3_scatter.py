@@ -43,6 +43,6 @@ def main(env: Environment = None):
     # Every rank but the root should read a 1: that is the |1⟩ the root
     # prepared, now living on the receiver. The root reads 0 everywhere,
     # having given its whole buffer away.
-    if comm.results:
-        for other, counts in comm.results.items():
-            print(f"rank_{other}: {counts}")
+    if rank == comm.size - 1:
+        for other, counts in comm.counts.items():
+            print(f"rank {other}: {counts}")

@@ -8,7 +8,7 @@ NetQMPI applications on Qiskit's AerSimulator backend.
 from __future__ import annotations
 
 import threading
-from typing import Any, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 # Imported at module scope, not lazily inside the methods that use them.
 # This package is only ever imported once a run has chosen the Aer backend
@@ -26,6 +26,50 @@ from netqmpi.runtime.adapters.aer.aer_circuit import AerCircuitAdapter
 from netqmpi.runtime.adapters.aer.aer_communicator import AerCommunicator
 from netqmpi.runtime.adapters.aer.aer_run_config import AerSimulatorConfig
 from netqmpi.helpers import load_main
+
+
+def register_name(index: int, rank: int) -> str:
+    """
+    Name of the classical register holding one rank's bits of one program.
+
+    Args:
+        index: Position of the circuit among the rank's circuits, which is
+            also the distributed program it belongs to.
+        rank: The rank that created the circuit.
+
+    Returns:
+        The register name, e.g. ``c0_r1``.
+    """
+    return f"c{index}_r{rank}"
+
+
+def split_by_register(counts: Dict[str, int],
+                      names: List[str]) -> Dict[str, Dict[str, int]]:
+    """
+    Split a joint Aer histogram into one marginal histogram per register.
+
+    Qiskit writes one space-separated field per classical register, the
+    last register first, so the fields are reversed to line up with
+    ``names``. Correlations between registers are lost; the joint
+    histogram is still what ``comm.results`` holds.
+
+    Args:
+        counts: The histogram of the global circuit.
+        names: Its classical register names, in circuit order.
+
+    Returns:
+        A mapping from register name to that register's histogram.
+    """
+    marginals: Dict[str, Dict[str, int]] = {name: {} for name in names}
+    for key, count in counts.items():
+        fields = key.split()[::-1]
+        if len(fields) != len(names):
+            raise RuntimeError(
+                f"Aer returned the outcome {key!r} with {len(fields)} "
+                f"registers, but the circuit has {len(names)}: {names}.")
+        for name, bits in zip(names, fields):
+            marginals[name][bits] = marginals[name].get(bits, 0) + count
+    return marginals
 
 
 class AerExecutorAdapter(Executor):
@@ -117,7 +161,7 @@ class AerExecutorAdapter(Executor):
                     if adapter.num_clbits:
                         self._global_circuit.add_register(
                             ClassicalRegister(adapter.num_clbits,
-                                              f"c{index}_r{rank}"))
+                                              register_name(index, rank)))
                     adapter.assign_slice(self._global_circuit,
                                          self._qubit_count, self._clbit_count)
                     self._qubit_count += adapter.num_qubits
@@ -255,9 +299,19 @@ class AerExecutorAdapter(Executor):
         )
         job = simulator.run(self._global_circuit, **run_kwargs)
         counts = job.result().get_counts()
+        per_register = split_by_register(
+            counts, [register.name for register in self._global_circuit.cregs])
+
+        by_rank = {}
+        for comm in AerCommunicator.communicators:
+            own = [per_register.get(register_name(index, comm.rank), {})
+                   for index in range(len(comm.circuits))]
+            by_rank[comm.rank] = own[0] if len(own) == 1 else own
+        by_rank = dict(sorted(by_rank.items()))
 
         for comm in AerCommunicator.communicators:
             comm.results = counts
+            comm.counts = by_rank
 
     def _reset(self) -> None:
         """

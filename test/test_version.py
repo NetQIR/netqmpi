@@ -41,6 +41,14 @@ def git(*args: str, cwd: Path = REPO_ROOT) -> str:
                           text=True, check=True).stdout.strip()
 
 
+def latest_tag():
+    """The most recent tag reachable from HEAD, or ``None`` in a clone without tags."""
+    done = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "describe", "--tags", "--abbrev=0"],
+        capture_output=True, text=True)
+    return done.stdout.strip() if done.returncode == 0 else None
+
+
 @pytest.mark.parametrize("output, expected", [
     ("v0.3.1-0-g662436b", {"tag": "v0.3.1", "commits_since_tag": 0, "dirty": False}),
     ("v0.3.1-12-g662436b-dirty", {"tag": "v0.3.1", "commits_since_tag": 12, "dirty": True}),
@@ -59,7 +67,7 @@ def test_a_checkout_reports_its_own_tag_and_commit():
     info = version.get_build_info()
     assert info.source == "git"
     assert info.commit == git("rev-parse", "HEAD")
-    assert info.tag == git("describe", "--tags", "--abbrev=0")
+    assert info.tag == latest_tag()
     assert info.version == version.setup_py_version(str(REPO_ROOT))
     assert netqmpi.__version__ == info.version
 
@@ -122,6 +130,7 @@ def test_the_cli_prints_the_version_without_other_arguments():
 @needs_git
 def test_a_build_freezes_the_tag_and_commit(tmp_path):
     """``setup.py build_py`` writes _build_info.py into the build, not the sources."""
+    pytest.importorskip("setuptools", reason="building needs setuptools")
     done = subprocess.run(
         [sys.executable, "setup.py", "-q", "build_py", "--build-lib", str(tmp_path)],
         cwd=REPO_ROOT, capture_output=True, text=True)
@@ -131,6 +140,6 @@ def test_a_build_freezes_the_tag_and_commit(tmp_path):
     exec((tmp_path / "netqmpi" / "_build_info.py").read_text(), namespace)
     frozen = namespace["BUILD_INFO"]
     assert frozen["commit"] == git("rev-parse", "HEAD")
-    assert frozen["tag"] == git("describe", "--tags", "--abbrev=0")
+    assert frozen["tag"] == latest_tag()
     assert frozen["version"] == version.setup_py_version(str(REPO_ROOT))
     assert not (REPO_ROOT / "netqmpi" / "_build_info.py").exists()

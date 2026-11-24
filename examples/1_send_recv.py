@@ -17,6 +17,9 @@ reads 0 and 1 about equally often. What the run shows is that the transfer
 happened at all; it takes a state like ``|1⟩`` to tell a correct
 teleportation from a broken one.
 
+Only ranks 0 and 1 take part. With more ranks the others build an empty
+circuit and measure nothing.
+
 This file uses SDK abstractions only, so the same code runs on any backend.
 
 Run with::
@@ -40,12 +43,14 @@ def main(env: Environment = None):
         if rank == 0:
             circuit.h(0)                            # prepare |+>
             comm.qsend(circuit, [0], next_rank)     # and give it away
-        else:
+        elif rank == 1:
             comm.qrecv(circuit, [0], previous_rank)
             circuit.measure(0, 0)
 
-    # The circuits of all the ranks are submitted together when the last
-    # rank leaves the block, so only that rank sees the results here — and
-    # it sees every rank's counts, keyed by rank.
-    if rank == comm.size - 1 and comm.results:
-        print(comm.results)
+    # The run ends when the last rank leaves its block, and that rank is
+    # guaranteed to see every rank's counts, keyed by rank.
+    # Ranks that measured nothing report no counts, or all zeros on
+    # backends that keep every classical bit.
+    if rank == comm.size - 1:
+        for other, counts in comm.counts.items():
+            print(f"rank {other}: {counts}")

@@ -145,8 +145,14 @@ every rank's classical bits concatenated — broadcast identically to every rank
 {'01': 517, '00': 507}
 ```
 
-It is *not* keyed by rank, unlike CUNQA. Which slice of the bitstring belongs to
-which rank follows from the classical-bit offsets, in rank order.
+It is *not* keyed by rank, unlike CUNQA. Each rank's bits live in their own
+classical register, named `c<circuit>_r<rank>`; Qiskit prints one
+space-separated field per register, the last register first.
+
+`comm.counts` is that histogram split by register: `{rank: {bitstring: count}}`,
+the same shape as on every other backend, on every rank. The split keeps each
+rank's own outcomes but drops the correlations between ranks, which only
+`comm.results` has.
 
 ## Configuration
 

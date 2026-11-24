@@ -14,7 +14,8 @@ def main(env: Environment = None):                  # 2. the entry point
         circuit = env.create_circuit(2, 2)          # 5. circuits
         ...                                         #    gates and primitives
 
-    print(comm.results)                             # 6. results, after the block
+    if rank == size - 1:                            # 6. results, after the block
+        print(comm.counts)
 ```
 
 ### 1. Imports
@@ -79,9 +80,29 @@ The Qoala backend currently supports exactly **one** circuit per rank.
 (reading-results)=
 ### 6. Reading results
 
-`comm.results` is populated when the joint execution finishes. **Its shape
-depends on the backend**, which is the one place the abstraction is not
-watertight:
+`comm.counts` is populated when the joint execution finishes, and has the
+same shape on every backend: every rank's histogram, keyed by rank.
+
+```python
+{0: {'0': 1024}, 1: {'0': 517, '1': 507}}
+```
+
+A rank that built several circuits gets a list of histograms, in creation
+order. The run ends when the *last* rank leaves its `with comm:` block, so that
+rank always has `comm.counts`; whether the others do depends on whether the
+backend runs ranks concurrently (Aer) or one after another (CUNQA, Qoala,
+NetQASM). The portable idiom, used by every shipped example, prints from the
+last rank:
+
+```python
+if rank == comm.size - 1:
+    for other, counts in comm.counts.items():
+        print(f"rank {other}: {counts}")
+```
+
+`comm.results` holds the same outcomes in **each backend's native shape**. Use
+it when you need what only one backend offers, such as the correlations between
+ranks in Aer's joint histogram:
 
 | Backend | Shape of `comm.results` | Populated on |
 |---|---|---|
@@ -89,15 +110,6 @@ watertight:
 | **Aer** | `{bitstring: count}` for the *whole* global circuit (all ranks' classical bits concatenated) | every rank, identically |
 | **Qoala** | `{bitstring: count}` for this rank alone | every rank |
 | **NetQASM** | `{outcome: count}` for this rank's own measurements | the rank itself |
-
-The portable idiom, used by every shipped example, is to guard on a non-empty
-result and let whichever rank has it do the printing:
-
-```python
-if comm.results:
-    for other, counts in comm.results.items():
-        print(f"rank_{other}: {counts}")
-```
 
 `comm.metrics`, next to it, holds what the run measured besides the outcomes,
 grouped by who measured it. It is empty unless the backend fills it, which

@@ -147,7 +147,8 @@ when the trace is complete, and reserves exactly that much.
 Four places, all documented rather than hidden:
 
 1. **`comm.results` differs per backend** — keyed by rank on CUNQA, a single
-   global histogram on Aer, this rank's own on Qoala and NetQASM. See
+   global histogram on Aer, this rank's own on Qoala and NetQASM. Every
+   adapter therefore also fills `comm.counts`, keyed by rank everywhere; see
    {ref}`the comparison <comm-results-shape>`.
 2. **Collectives that a backend expands jointly** need the circuits of all ranks
    at once. `CircuitAdapter` therefore allows a group-translation entry point

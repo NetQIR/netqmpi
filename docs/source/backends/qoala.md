@@ -161,7 +161,7 @@ which imports `qoala` and `netsquid` lazily inside its own methods.
 
 `comm.results` is a `{bitstring: count}` histogram for **this rank alone**,
 ordered by ascending classical-bit index. A rank that returns no measurements
-gets an empty dict.
+gets an empty dict. `comm.counts` gathers every rank's histogram, keyed by rank.
 
 ## Validation experiments
 

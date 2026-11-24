@@ -125,7 +125,7 @@ setup(
     },
     author='F. Javier Cardama',
     author_email='javier.cardama@usc.es',
-    description='A high-level abstraction layer similar to MPI for distributed quantum programming over NetQASM.',
+    description='An MPI-like, backend-agnostic library for distributed quantum programming.',
     long_description=_long_description(),
     long_description_content_type='text/markdown',
     url=REPOSITORY,
@@ -142,5 +142,5 @@ setup(
         'Operating System :: OS Independent',
     ],
     license='Apache-2.0',
-    python_requires='>=3.6',
+    python_requires='>=3.8',
 )

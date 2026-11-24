@@ -95,8 +95,9 @@ portable stand-in for `qft_telegate`; on NetQASM only up to n=4 (see
 (comm-results-shape)=
 ## The shape of `comm.results`
 
-The one place the abstraction is not watertight: each backend reports results
-differently.
+`comm.counts` is the same everywhere — `{rank: {bitstring: count}}`, always
+populated on the last rank to leave its block — and is what portable programs
+should read. `comm.results` keeps each backend's native shape:
 
 | Backend | Shape | Populated on |
 |---|---|---|

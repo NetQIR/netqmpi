@@ -87,7 +87,9 @@ class QoalaCommunicator(QMPICommunicator):
             registry = dict(QoalaCommunicator._registry)
             QoalaCommunicator._registry.clear()
             results = self._executor.run_simulation(registry)
+            counts = {rank: results.get(rank, {}) for rank in sorted(registry)}
             for rank, comm in ((r, c) for r, (_, c) in registry.items()):
                 comm.results = results.get(rank, {})
+                comm.counts = counts
 
         return None

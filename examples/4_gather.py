@@ -41,6 +41,6 @@ def main(env: Environment = None):
     # The root should read a 1 on every slot — its own and the ones it
     # gathered — while the contributors read the 0 left behind by the
     # transfer.
-    if comm.results:
-        for other, counts in comm.results.items():
-            print(f"rank_{other}: {counts}")
+    if rank == comm.size - 1:
+        for other, counts in comm.counts.items():
+            print(f"rank {other}: {counts}")

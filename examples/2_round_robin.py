@@ -45,8 +45,8 @@ def main(env: Environment = None):
             else:
                 circuit.measure(0, 0)
 
-    # Only the last rank to leave the block sees the results, and it sees
-    # every rank's counts, keyed by rank.
-    if comm.results:
-        for other, counts in comm.results.items():
-            print(f"rank_{other}: {counts}")
+    # The run ends when the last rank leaves its block, and that rank is
+    # guaranteed to see every rank's counts, keyed by rank.
+    if rank == comm.size - 1:
+        for other, counts in comm.counts.items():
+            print(f"rank {other}: {counts}")

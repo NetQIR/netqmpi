@@ -124,14 +124,14 @@ naming the operation and the backend. If a gate seems to do nothing, check the
 [backend support matrix](circuits.md#backend-support-matrix) before assuming the
 physics is wrong, and report it as a bug if the adapter dropped it silently.
 
-### `comm.results` is empty
+### `comm.counts` or `comm.results` is empty
 
 Expected on most ranks. Circuits are submitted jointly when the *last* rank
 leaves its `with comm:` block, so results land on that rank and — depending on
-the backend — possibly not on the others. Guard with `if comm.results:`; see
-{ref}`Reading results <reading-results>`.
+the backend — possibly not on the others. Read them from
+`rank == comm.size - 1`; see {ref}`Reading results <reading-results>`.
 
-It is also empty on any rank that measured nothing. After a `qsend` the sender's
+A rank's histogram is also empty on any rank that measured nothing. After a `qsend` the sender's
 qubit is back in `|0⟩`, so a rank that gave everything away contributes no
 counts.
 

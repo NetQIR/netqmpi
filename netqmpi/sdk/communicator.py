@@ -10,7 +10,7 @@ imported here.
 """
 from __future__ import annotations
 
-from typing import Any, List, Dict, Optional
+from typing import Any, List, Dict, Optional, Union
 from abc import ABC, abstractmethod
 
 from netqmpi.sdk.circuit import Circuit
@@ -33,7 +33,14 @@ class QMPICommunicator(ABC):
     Attributes:
         circuits: The circuits this rank created, in creation order.
         results: Measurement counts, filled by the backend after the run.
-            Their shape differs per backend.
+            Their shape differs per backend; see :attr:`counts` for the one
+            that does not.
+        counts: Every rank's measurement counts, keyed by rank, in the same
+            shape on every backend: ``{rank: {bitstring: count}}``, with a
+            list of histograms, in creation order, for a rank that built
+            several circuits. Filled when the run ends, which is when the
+            last rank leaves its ``with comm:`` block: that rank always has
+            it, the others only on backends that run the ranks concurrently.
         metrics: What the run measured besides the outcomes (simulated
             time, entanglement statistics, ...), filled by the backend when
             it has something to report and empty otherwise. Entries are
@@ -53,6 +60,7 @@ class QMPICommunicator(ABC):
         self._size = size
         self.circuits: List[Circuit] = []
         self.results: Dict = {}
+        self.counts: Dict[int, Union[Dict[str, int], List[Dict[str, int]]]] = {}
         self.metrics: Dict[str, Any] = {}
 
     # ------------------------------------------------------------------
